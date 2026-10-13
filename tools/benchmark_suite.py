@@ -51,7 +51,7 @@ def main():
     parser.add_argument("--seeds", type=int, nargs="+", default=[42, 43, 44])
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--machine", default="unspecified")
-    parser.add_argument("--profiles", nargs="+", choices=["mixed", "deep", "cancel-heavy", "sweep", "id-churn", "aggressive"],
+    parser.add_argument("--profiles", nargs="+", choices=["mixed", "deep", "cancel-heavy", "sweep", "id-churn", "aggressive", "amend-heavy"],
                         default=["mixed", "deep", "cancel-heavy", "sweep", "id-churn"])
     args = parser.parse_args()
     if not 1 <= args.orders <= 10000000 or not 1 <= args.samples <= 100 or not 1 <= args.rounds <= 100:
@@ -70,7 +70,8 @@ def main():
              {"name": "cancel-heavy", "profile": "cancel-heavy", "levels": 4096, "depth": 8},
              {"name": "sweep", "profile": "sweep", "levels": 64, "depth": 8},
              {"name": "id-churn", "profile": "id-churn", "levels": 1, "depth": 1},
-             {"name": "aggressive", "profile": "aggressive", "levels": 1, "depth": 1}]
+             {"name": "aggressive", "profile": "aggressive", "levels": 1, "depth": 1},
+             {"name": "amend-heavy", "profile": "amend-heavy", "levels": 4096, "depth": 8}]
     cases = [case for case in cases if case["profile"] in args.profiles]
     report = {"created_utc": datetime.now(timezone.utc).isoformat(), "platform": platform.platform(),
               "machine": args.machine, "python": platform.python_version(),

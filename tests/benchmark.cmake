@@ -1,4 +1,4 @@
-foreach(profile mixed deep cancel-heavy sweep id-churn aggressive)
+foreach(profile mixed deep cancel-heavy sweep id-churn aggressive amend-heavy)
   execute_process(COMMAND "${BENCH}" --profile "${profile}" --levels 4 --depth 2
     --orders 100 --samples 2 --seed 0 --latency RESULT_VARIABLE rc OUTPUT_VARIABLE out ERROR_VARIABLE err)
   if(NOT rc EQUAL 0 OR NOT out MATCHES "profile=${profile} commands=100" OR

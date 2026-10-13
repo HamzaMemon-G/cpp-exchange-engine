@@ -358,7 +358,7 @@ void amendment_differential() {
 }
 void workload_profiles() {
     for (const auto profile : {WorkloadProfile::Mixed, WorkloadProfile::Deep, WorkloadProfile::CancelHeavy,
-                              WorkloadProfile::Sweep, WorkloadProfile::IdChurn, WorkloadProfile::Aggressive}) {
+                              WorkloadProfile::Sweep, WorkloadProfile::IdChurn, WorkloadProfile::Aggressive, WorkloadProfile::AmendHeavy}) {
         const WorkloadOptions options{1000, 42, profile, 16, 3};
         const auto workload = benchmark_workload(options);
         const auto repeated = benchmark_workload(options);
@@ -368,7 +368,7 @@ void workload_profiles() {
         require(parse_profile(profile_name(profile)) == profile, "profile name roundtrip");
         Engine engine;
         Reference reference;
-        std::size_t cancellations = 0, trades = 0;
+        std::size_t cancellations = 0, trades = 0, amendments = 0;
         for (const auto* commands : {&workload.setup, &workload.commands}) {
             for (const auto& command : *commands) {
                 const auto result = execute(engine, command);
@@ -377,6 +377,7 @@ void workload_profiles() {
                 if (profile != WorkloadProfile::Mixed && profile != WorkloadProfile::Aggressive)
                     require(result.status == Status::Accepted, "specialized profiles contain no rejections");
                 if (command.kind == CommandKind::Cancel) ++cancellations;
+                if (command.kind == CommandKind::Amend) ++amendments;
                 trades += result.trades.size();
                 const auto metrics = engine.metrics();
                 require(metrics.active_orders == reference.book.size() && metrics.reserved_ids == reference.used.size(),
@@ -392,6 +393,9 @@ void workload_profiles() {
             require(cancellations > 0, "deep profile exercises successful cancellation");
         }
         if (profile == WorkloadProfile::Sweep) require(trades > 500, "sweep exercises many makers");
+        if (profile == WorkloadProfile::AmendHeavy)
+            require(amendments > 650 && cancellations > 50 && trades == 0,
+                    "amend-heavy exercises live noncrossing amendments and cancels");
         if (profile == WorkloadProfile::IdChurn)
             require(engine.metrics().active_orders == 0 && engine.metrics().reserved_ids == 500 && cancellations == 500,
                     "ID churn retains IDs after draining book");

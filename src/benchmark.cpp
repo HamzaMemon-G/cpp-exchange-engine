@@ -124,7 +124,7 @@ int main(int argc, char** argv) {
             if (arg == "--memory-only") { memory_only = true; continue; }
             if (arg == "--help") {
                 std::cout << "exchange_bench [--orders N] [--seed N] [--samples N] [--latency]\n"
-                          << "  [--profile mixed|deep|cancel-heavy|sweep|id-churn|aggressive] [--levels N] [--depth N]\n"
+                          << "  [--profile mixed|deep|cancel-heavy|sweep|id-churn|aggressive|amend-heavy] [--levels N] [--depth N]\n"
                           << "  --memory-only: fresh-process memory pass; no warm-up or throughput timing\n";
                 return 0;
             }

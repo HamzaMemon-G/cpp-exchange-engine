@@ -10,7 +10,7 @@ int main(int argc, char** argv) {
             const std::string arg = argv[i];
             if (arg == "--help") {
                 std::cout << "exchange_generate [--orders N] [--seed N]\n"
-                          << "  [--profile mixed|deep|cancel-heavy|sweep|id-churn|aggressive] [--levels N] [--depth N]\n"
+                          << "  [--profile mixed|deep|cancel-heavy|sweep|id-churn|aggressive|amend-heavy] [--levels N] [--depth N]\n"
                           << "Output includes untimed benchmark setup, then N command attempts, then BOOK.\n";
                 return 0;
             }

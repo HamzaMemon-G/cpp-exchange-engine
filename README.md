@@ -215,6 +215,9 @@ Two more independent 20-seed streams each test 60,000 commands: immediate-order
 mixes and amendment mixes. Results, trades, expirations, books, FIFO and total
 quantity disposition are checked after every command. V1/V2 compatibility,
 validated-copy upgrades and the new documented example are also tested.
+All 65,536 four-command streams from a 16-command alphabet are independently
+checked too (262,144 additional command attempts), including repeated IDs,
+amendments, both crossing directions and immediate orders.
 
 ```sh
 ./build/exchange_generate --orders 100000 --seed 42 > workload.txt
@@ -253,15 +256,20 @@ profiles use the same matching engine, with no special core behavior:
 | `sweep` | Repeated batches of resting orders followed by one taker consuming the whole batch; alternates sides |
 | `id-churn` | Alternating add/cancel pairs; small active book, steadily growing reserved-ID set |
 | `aggressive` | Roughly 50% GTC, 15% IOC, 15% market, 10% attempted amendment and 10% attempted cancel |
+| `amend-heavy` | Preload both sides; roughly 75% live amendments, 15% noncrossing adds and 10% successful cancels |
 
 `--levels` and `--depth` control the initial book or sweep batch. Deep/cancel-heavy
-setup has `2 * levels * depth` orders and is reapplied before every sample, outside
+and amend-heavy setup has `2 * levels * depth` orders and is reapplied before every sample, outside
 timing. Prices stay noncrossing and cancellation targets are tracked during
 generation. If that pool empties, generation adds an order instead; output reports
 the actual mix. Sweep batches have `levels * depth` makers of quantity one and one
 taker; a final incomplete batch is allowed. Mixed, id-churn and aggressive ignore book shape.
 Aggressive uses bounded prices and quantities like mixed; amend/cancel targets
 are earlier IDs, including those already filled or expired. Actual counters are reported.
+Amend-heavy tracks live IDs and sides, so every command succeeds. Amendments
+choose remaining quantity 1..100; roughly half attempt a new noncrossing price
+and half keep the current price. Adds start with quantity 50. If the live pool
+empties, it adds instead. This isolates active amendment handling from trading.
 All profiles process exactly `--orders` timed attempts, excluding setup. The
 product `levels * depth` is limited to 500,000 to bound setup size. The generator
 supports the same profile/shape options and prints setup before the timed commands.
@@ -282,7 +290,7 @@ sampled before invariant checking; the final destruction checkpoint can include
 allocations made by that check. Other platforms report memory unavailable.
 
 The standard-library-only Python suite defaults to five historical profiles and three seeds;
-use `--profiles aggressive` (or an explicit list) to include new order types. It
+use `--profiles aggressive amend-heavy` (or an explicit list) to include new order types. It
 collects fresh-process memory passes, and saves exact commands, raw outputs,
 executable hashes and platform metadata. With `--baseline PATH`, it alternates
 baseline/candidate process order and checks workload fingerprints, result counters
@@ -300,4 +308,6 @@ No timing-based test assertions, CPU affinity, cache flushing, real-market trace
 network latency, or production-HFT claim. See [measured results](docs/BENCHMARK.md)
 for the original local run and limitations, and [the cancellation experiment](docs/PERFORMANCE.md)
 for broader workloads, process memory and paired before/after results.
+See [new order-type measurements](docs/ORDER_TYPE_MEASUREMENTS.md) for the added
+workloads and the observed compatibility/performance cost of the feature extension.
 TCP/networking is a later milestone.
