@@ -60,6 +60,8 @@ def main():
         parser.error("seeds must be unsigned 64-bit integers")
     if len(set(args.seeds)) != len(args.seeds):
         parser.error("seeds must be distinct")
+    if len(set(args.profiles)) != len(args.profiles):
+        parser.error("profiles must be distinct")
     binaries = {"candidate": args.binary.resolve()}
     if args.baseline:
         binaries = {"baseline": args.baseline.resolve(), **binaries}
@@ -72,7 +74,8 @@ def main():
     cases = [case for case in cases if case["profile"] in args.profiles]
     report = {"created_utc": datetime.now(timezone.utc).isoformat(), "platform": platform.platform(),
               "machine": args.machine, "python": platform.python_version(),
-              "method": "alternating AB/BA fresh processes; each process warms up once; harness uses upper-middle median; suite uses statistics.median",
+              "method": ("alternating AB/BA fresh processes" if args.baseline else "fresh candidate processes") +
+                        "; each process warms up once; harness uses upper-middle median; suite uses statistics.median",
               "orders": args.orders, "samples": args.samples, "rounds": args.rounds, "seeds": args.seeds, "profiles": args.profiles,
               "binaries": {label: {"path": str(path), "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
                            for label, path in binaries.items()}, "runs": [], "memory_runs": [], "summary": []}

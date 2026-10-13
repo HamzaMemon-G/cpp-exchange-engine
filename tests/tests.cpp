@@ -327,11 +327,15 @@ void amendment_differential() {
             const auto action = random()%100;
             const auto kind = action < 15 ? CommandKind::Cancel : action < 35 ? CommandKind::Amend :
                               action < 65 ? CommandKind::Add : action < 85 ? CommandKind::Ioc : CommandKind::Market;
-            const Command command{kind, 1+random()%1000,
+            const auto before = engine.orders();
+            auto id = 1+random()%1000;
+            // Exercise successful active-order changes as well as missing/expired IDs.
+            if ((kind == CommandKind::Amend || kind == CommandKind::Cancel) && !before.empty() && random()%2)
+                id = before[static_cast<std::size_t>(random()%before.size())].id;
+            const Command command{kind, id,
                 kind == CommandKind::Cancel || kind == CommandKind::Amend ? Side::Buy : random()%2 ? Side::Buy : Side::Sell,
                 kind == CommandKind::Market || kind == CommandKind::Cancel ? 0 : static_cast<Value>(95+random()%11),
                 kind == CommandKind::Cancel ? 0 : static_cast<Value>(1+random()%30)};
-            const auto before = engine.orders();
             const auto result = execute(engine, command);
             require(result == reference.run(command), "amendment random reference result");
             require(engine.orders() == reference.orders() && engine.valid(), "amendment random reference book");
@@ -402,6 +406,32 @@ void workload_profiles() {
     throws([] { benchmark_workload({1, 0, WorkloadProfile::Deep, 1000000, 1000000}); });
     throws([] { benchmark_workload({1, 0, static_cast<WorkloadProfile>(99), 1, 1}); });
 }
+void bounded_sequences() {
+    // Exhaust all four-command streams from a small alphabet. This complements
+    // random testing with repeated IDs and every short amendment/FIFO ordering.
+    const std::vector<Command> alphabet = {
+        {CommandKind::Add, 1, Side::Buy, 100, 3}, {CommandKind::Add, 2, Side::Buy, 100, 2},
+        {CommandKind::Add, 3, Side::Sell, 101, 2}, {CommandKind::Add, 4, Side::Sell, 100, 4},
+        {CommandKind::Ioc, 5, Side::Buy, 101, 4}, {CommandKind::Ioc, 6, Side::Sell, 100, 4},
+        {CommandKind::Market, 7, Side::Buy, 0, 4}, {CommandKind::Market, 8, Side::Sell, 0, 4},
+        {CommandKind::Cancel, 1, Side::Buy, 0, 0}, {CommandKind::Cancel, 3, Side::Buy, 0, 0},
+        {CommandKind::Amend, 1, Side::Buy, 100, 1}, {CommandKind::Amend, 1, Side::Buy, 100, 4},
+        {CommandKind::Amend, 1, Side::Buy, 101, 2}, {CommandKind::Amend, 2, Side::Buy, 100, 1},
+        {CommandKind::Amend, 3, Side::Buy, 100, 1}, {CommandKind::Amend, 3, Side::Buy, 101, 4}};
+    const auto streams = alphabet.size()*alphabet.size()*alphabet.size()*alphabet.size();
+    for (std::size_t stream = 0; stream < streams; ++stream) {
+        Engine engine;
+        Reference reference;
+        auto remaining = stream;
+        for (int depth = 0; depth < 4; ++depth) {
+            const auto& command = alphabet[remaining%alphabet.size()];
+            remaining /= alphabet.size();
+            const auto result = execute(engine, command);
+            require(result == reference.run(command), "bounded sequence reference result");
+            require(engine.orders() == reference.orders() && engine.valid(), "bounded sequence reference book");
+        }
+    }
+}
 void move_and_level_lifetime() {
     Engine source;
     for (OrderId id = 1; id <= 100; ++id) {
@@ -444,6 +474,10 @@ void immediate_logging() {
     std::filesystem::remove(path);
     Engine engine;
     std::vector<Command> commands;
+    // Explicitly cover retained and lost priority, crossing and a rejected resurrection in replay.
+    for (const auto* text : {"ADD 10001 BUY 90 10", "ADD 10002 BUY 90 8", "AMEND 10001 90 6",
+            "AMEND 10001 90 7", "ADD 10003 SELL 110 4", "AMEND 10001 110 4", "AMEND 10001 90 1"})
+        commands.push_back(parse_command(text));
     std::mt19937_64 random(991);
     for (OrderId id = 1; id <= 2000; ++id) {
         const auto kind = id%5 == 0 ? CommandKind::Cancel : id%5 == 1 ? CommandKind::Add :
@@ -505,6 +539,15 @@ void immediate_logging() {
     throws([&] { upgrade_log(legacy, legacy); });
     require(read_file(upgraded) == destination_bytes && read_file(legacy) == source_bytes,
             "upgrade refuses overwrite and source alias");
+    const auto v2_copy = dir/"v2-copy.log";
+    std::filesystem::remove(v2_copy);
+    upgrade_log(upgraded, v2_copy);
+    require(read_file(upgraded) == read_file(v2_copy) && replay_log(v2_copy).valid(),
+            "already V2 upgrade is a validated unchanged copy");
+    auto reserved = replay_log(v2_copy);
+    require(reserved.add(10, Side::Buy, 100, 1).status == Status::DuplicateId &&
+            reserved.market(11, Side::Buy, 1).status == Status::DuplicateId,
+            "upgraded replay preserves filled and expired IDs");
     const auto bad = dir/"immediate-malformed.log";
     const auto no_output = dir/"upgrade-must-not-exist.log";
     std::filesystem::remove(no_output);
@@ -577,6 +620,7 @@ int main() {
         {"validation and bounds", validation}, {"market and IOC", immediate_orders}, {"amendment priority", amendments},
         {"40000 differential commands", differential}, {"60000 immediate differential commands", immediate_differential},
         {"60000 amendment differential commands", amendment_differential},
+        {"65536 bounded four-command sequences", bounded_sequences},
         {"workload profiles", workload_profiles}, {"move and level lifetime", move_and_level_lifetime},
         {"event log", logging}, {"V2 immediate journal and upgrade", immediate_logging}};
     for (const auto& [name, test] : tests) {
