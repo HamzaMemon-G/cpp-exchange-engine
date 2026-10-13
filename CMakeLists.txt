@@ -4,6 +4,7 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 option(EXCHANGE_SANITIZERS "Enable address and undefined behavior sanitizers" OFF)
+option(EXCHANGE_FUZZER "Build optional Clang/Linux command fuzzer" OFF)
 add_library(exchange_core src/engine.cpp src/commands.cpp src/event_log.cpp src/workload.cpp)
 target_include_directories(exchange_core PUBLIC include)
 if(MSVC)
@@ -33,3 +34,15 @@ add_test(NAME cli_example COMMAND exchange_cli --input ${CMAKE_CURRENT_SOURCE_DI
 add_test(NAME cli_integration COMMAND ${CMAKE_COMMAND} -DCLI=$<TARGET_FILE:exchange_cli> -DSOURCE=${CMAKE_CURRENT_SOURCE_DIR} -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/cli.cmake)
 add_test(NAME benchmark_profiles COMMAND ${CMAKE_COMMAND} -DBENCH=$<TARGET_FILE:exchange_bench>
   -DGENERATOR=$<TARGET_FILE:exchange_generate> -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/benchmark.cmake)
+
+if(EXCHANGE_FUZZER)
+  if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang" OR NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    message(FATAL_ERROR "EXCHANGE_FUZZER requires Clang on Linux with its libFuzzer runtime")
+  endif()
+  # Compile the actual parser/core again with coverage; normal targets remain unchanged.
+  add_executable(exchange_command_fuzz tests/fuzz/commands_fuzz.cpp src/commands.cpp src/engine.cpp)
+  target_include_directories(exchange_command_fuzz PRIVATE include)
+  target_compile_options(exchange_command_fuzz PRIVATE -Wall -Wextra -Wpedantic -Wconversion -Wshadow
+    -fsanitize=fuzzer,address,undefined -fno-omit-frame-pointer)
+  target_link_options(exchange_command_fuzz PRIVATE -fsanitize=fuzzer,address,undefined)
+endif()

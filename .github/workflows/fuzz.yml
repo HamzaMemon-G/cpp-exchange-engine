@@ -1,0 +1,30 @@
+name: Command fuzzing
+on:
+  push:
+    paths: ['src/commands.cpp', 'src/engine.cpp', 'include/exchange/**', 'tests/fuzz/**', 'CMakeLists.txt', '.github/workflows/fuzz.yml']
+  pull_request:
+    paths: ['src/commands.cpp', 'src/engine.cpp', 'include/exchange/**', 'tests/fuzz/**', 'CMakeLists.txt', '.github/workflows/fuzz.yml']
+  workflow_dispatch:
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  clang-fuzz:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build covered parser and core with sanitizers
+        run: |
+          cmake -S . -B build-fuzz -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_CXX_COMPILER=clang++ -DEXCHANGE_FUZZER=ON
+          cmake --build build-fuzz --target exchange_command_fuzz --parallel 2
+      - name: Fuzz for two minutes
+        run: |
+          set -o pipefail
+          mkdir -p fuzz-artifacts
+          ./build-fuzz/exchange_command_fuzz tests/fuzz/corpus -dict=tests/fuzz/commands.dict -max_total_time=120 -timeout=5 -rss_limit_mb=1024 -max_len=4096 -seed=42 -artifact_prefix=fuzz-artifacts/ 2>&1 | tee fuzz-artifacts/fuzzer.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: command-fuzz-results
+          path: fuzz-artifacts/
