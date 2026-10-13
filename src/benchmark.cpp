@@ -51,6 +51,28 @@ void hash_word(std::uint64_t& hash, std::uint64_t value) {
         value >>= 8;
     }
 }
+void hash_result(std::uint64_t& hash, const Result& result) {
+    hash_word(hash, result.sequence);
+    hash_word(hash, static_cast<std::uint64_t>(result.status));
+    hash_word(hash, result.trades.size());
+    for (const auto& trade : result.trades) {
+        hash_word(hash, trade.sequence);
+        hash_word(hash, trade.maker);
+        hash_word(hash, trade.taker);
+        hash_word(hash, static_cast<std::uint64_t>(trade.price));
+        hash_word(hash, static_cast<std::uint64_t>(trade.quantity));
+    }
+}
+void hash_book(std::uint64_t& hash, const std::vector<Order>& orders) {
+    hash_word(hash, orders.size());
+    for (const auto& order : orders) {
+        hash_word(hash, order.id);
+        hash_word(hash, static_cast<std::uint64_t>(order.side));
+        hash_word(hash, static_cast<std::uint64_t>(order.price));
+        hash_word(hash, static_cast<std::uint64_t>(order.quantity));
+        hash_word(hash, order.sequence);
+    }
+}
 std::uint64_t fingerprint(const Workload& workload) {
     std::uint64_t hash = 14695981039346656037ULL;
     hash_word(hash, workload.setup.size());
@@ -134,24 +156,36 @@ int main(int argc, char** argv) {
                 setup(engine, workload);
                 memory_checkpoint("after_setup", &engine);
                 Stats stats;
-                for (const auto& c : commands) account(stats, c, execute(engine, c));
+                std::uint64_t result_hash = 14695981039346656037ULL;
+                for (const auto& c : commands) {
+                    const auto result = execute(engine, c);
+                    account(stats, c, result);
+                    hash_result(result_hash, result);
+                }
                 memory_checkpoint("after_commands", &engine);
                 if (!engine.valid()) throw std::runtime_error("memory pass invariant failure");
+                hash_book(result_hash, engine.orders());
                 std::cout << "memory_result";
                 print_stats(stats);
-                std::cout << '\n';
+                std::cout << " result_fingerprint=" << result_hash << '\n';
             }
             memory_checkpoint("after_engine_destruction");
             return 0;
         }
         Stats expected_stats;
         std::vector<Order> expected_orders;
+        std::uint64_t result_hash = 14695981039346656037ULL;
         {
             Engine warmup;
             setup(warmup, workload);
-            for (const auto& c : commands) account(expected_stats, c, execute(warmup, c));
+            for (const auto& c : commands) {
+                const auto result = execute(warmup, c);
+                account(expected_stats, c, result);
+                hash_result(result_hash, result);
+            }
             if (!warmup.valid()) throw std::runtime_error("warm-up invariant failure");
             expected_orders = warmup.orders();
+            hash_book(result_hash, expected_orders);
         }
         std::cout << "samples=" << repetitions << " warmup=one_full_workload\n";
         std::vector<double> throughputs;
@@ -175,7 +209,7 @@ int main(int argc, char** argv) {
         }
         std::sort(throughputs.begin(), throughputs.end());
         std::cout << "median_commands_per_second=" << throughputs[throughputs.size()/2]
-                  ;
+                  << " result_fingerprint=" << result_hash;
         print_stats(final_stats);
         std::cout << '\n';
         if (latency) {

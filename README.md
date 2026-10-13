@@ -252,7 +252,10 @@ The standard-library-only Python suite covers five profiles and three seeds,
 collects fresh-process memory passes, and saves exact commands, raw outputs,
 executable hashes and platform metadata. With `--baseline PATH`, it alternates
 baseline/candidate process order and checks workload fingerprints, result counters
-and final-book metrics before comparing paired rates. Each harness sample also
+and final-book metrics before comparing paired rates. An untimed warm-up hashes
+every result/trade and final order into a result fingerprint, checked across
+binaries and against the memory pass (a reproducibility check, not a cryptographic
+integrity guarantee). Each harness sample also
 compares its complete final book and counters with the warm-up result, outside
 timing. Independent reference tests cover all specialized profiles. Performance
 has no pass/fail threshold. The optional CPU profile workflow captures whole-process

@@ -32,7 +32,8 @@ def run(binary, case, seed, args, memory=False):
                    if line.startswith("memory_result" if memory else "median_commands_per_second="))
     book = next(fields(line) for line in lines
                 if line.startswith("memory phase=after_commands" if memory else "final_book"))
-    semantic = {key: summary[key] for key in ("accepted", "rejected", "adds", "cancels", "trades", "volume")}
+    semantic = {key: summary[key] for key in
+                ("accepted", "rejected", "adds", "cancels", "trades", "volume", "result_fingerprint")}
     semantic.update({key: book[key] for key in ("active_orders", "bid_levels", "ask_levels", "reserved_ids")})
     semantic["workload_fingerprint"] = metadata["workload_fingerprint"]
     return {"command": command, "stdout": process.stdout, "stderr": process.stderr,
