@@ -7,6 +7,10 @@
 #include <unordered_set>
 
 namespace exchange {
+struct BookMetrics {
+    std::size_t active_orders{}, bid_levels{}, ask_levels{}, reserved_ids{};
+    bool operator==(const BookMetrics&) const = default;
+};
 // One engine represents one instrument. Not thread safe; no callbacks or I/O.
 class Engine {
 public:
@@ -20,6 +24,7 @@ public:
     std::vector<Order> orders() const; // buys descending, then sells ascending; FIFO
     std::uint64_t sequence() const { return sequence_; }
     bool valid() const; // O(n) diagnostic, not called by the hot path
+    BookMetrics metrics() const { return {active_.size(), bids_.size(), asks_.size(), used_.size()}; }
 private:
     using Queue = std::list<Order>;
     using Bids = std::map<Value, Queue, std::greater<Value>>;

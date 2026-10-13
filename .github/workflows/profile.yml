@@ -1,0 +1,34 @@
+name: CPU profile
+on:
+  pull_request:
+    paths:
+      - 'src/engine.cpp'
+      - 'src/benchmark.cpp'
+      - 'src/workload.cpp'
+      - 'include/exchange/**'
+      - '.github/workflows/profile.yml'
+  workflow_dispatch:
+jobs:
+  gprof:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build instrumented Release
+        run: >-
+          cmake -S . -B build-profile -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_CXX_COMPILER=g++ -DCMAKE_CXX_FLAGS=-pg -DCMAKE_EXE_LINKER_FLAGS=-pg
+      - run: cmake --build build-profile --parallel 2
+      - name: Capture whole-process profiles
+        run: |
+          mkdir -p profiles
+          for profile in mixed cancel-heavy deep sweep id-churn; do
+            ./build-profile/exchange_bench --profile "$profile" --orders 1000000 --samples 5 > "profiles/$profile-benchmark.txt"
+            gprof -b ./build-profile/exchange_bench gmon.out > "profiles/$profile-gprof.txt"
+            rm gmon.out
+          done
+          g++ --version > profiles/compiler.txt
+          lscpu > profiles/cpu.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cpu-profiles
+          path: profiles/

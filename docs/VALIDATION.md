@@ -27,18 +27,31 @@ Local verification on 2026-10-13, Windows with MinGW GCC 14.2.0:
   instrumented latency pass, and separate three-sample CLI/journal timing runs.
   See BENCHMARK.md and raw artifacts; no performance pass/fail threshold.
 * CI YAML parsed locally and its expected Linux GCC/Clang matrix and Windows job
-  were checked. Local build/test commands were exercised; hosted CI has not run.
+  were checked. Hosted results were subsequently inspected as recorded below.
 
 All three CTest entries also passed in a separate Debug build with
 `-D_GLIBCXX_DEBUG -D_GLIBCXX_ASSERTIONS`, checking standard-library iterator usage
 and assertions. This includes move construction/assignment and cancellation
 through the ID index. Checked-iterator testing is distinct from sanitizer testing.
 
+## Hosted verification
+
+On 2026-10-13, the push run for commit
+`e30a5b6b44aaa985094a1c0f2d6803bd2abad14b` completed successfully:
+[Actions run 38406561044](https://github.com/HamzaMemon-G/cpp-exchange-engine/actions/runs/38406561044).
+The job logs confirm all three original CTest entries passed under:
+
+* Ubuntu 24.04, GCC 13.3.0, Debug with address and undefined-behavior sanitizers.
+* Ubuntu 24.04, Clang 18.1.3, Debug with the same sanitizers.
+* Windows hosted runner, MSVC 19.51.36260.0, Release.
+
+These results apply to that commit; later commits need their own successful runs.
+
 ## Verification limits
 
-Linux, Clang, and MSVC were not run locally. No address/undefined-behavior sanitizer
-runtime was present in the available MinGW toolchain; sanitizer execution is left
-to the Linux CI configuration and is not claimed to have passed. No crash/power-loss
+Linux, Clang, and MSVC were not run locally on the original PC. No
+address/undefined-behavior sanitizer runtime was present in its MinGW toolchain;
+sanitizers were verified on hosted Linux as recorded above. No crash/power-loss
 fault injection, device persistence, simultaneous writers, memory-exhaustion
 recovery, or authenticated/real-market integration was tested.
 
