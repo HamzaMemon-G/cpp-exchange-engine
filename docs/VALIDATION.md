@@ -47,6 +47,32 @@ The job logs confirm all three original CTest entries passed under:
 
 These results apply to that commit; later commits need their own successful runs.
 
+## Expanded harness and optimized cancellation
+
+On the laptop, LLVM-MinGW Clang 23.1.3 with CMake 4.4.4 / Ninja 1.13.2 built
+Debug and Release without warnings. All four CTest entries passed in each:
+core/reference/replay, example CLI, CLI integration, and benchmark profiles.
+The original 40,000-command differential test still runs, and five additional
+1,000-command workload streams (plus setup) are checked against the reference.
+Tests also move multilevel engines into populated destinations and cancel/fill
+their remaining orders, exercising both price-level and order handles.
+
+The optimized source commit
+`fb876bbc497a559222adeaca9f58c21287cf6eb1` passed hosted PR checks:
+[Actions run 38413091696](https://github.com/HamzaMemon-G/cpp-exchange-engine/actions/runs/38413091696).
+Job logs confirm all four CTest entries passed in every configuration:
+
+* Ubuntu 24.04 / GCC 13.3.0 Debug, address and undefined-behavior sanitizers.
+* Ubuntu 24.04 / Clang 18.1.3 Debug, the same sanitizers.
+* Ubuntu 24.04 / GCC 13.3.0 Debug, `_GLIBCXX_DEBUG` and `_GLIBCXX_ASSERTIONS`.
+* Windows hosted runner / MSVC 19.51.36260.0 Release.
+
+The [CPU profile run](https://github.com/HamzaMemon-G/cpp-exchange-engine/actions/runs/38413079560)
+also succeeded. The local paired suite completed 150 timing processes and 30
+fresh memory processes with matching command/result fingerprints, counters and
+book metrics across the baseline and candidate. See [PERFORMANCE.md](PERFORMANCE.md)
+and its retained raw outputs for the experiment and measurement limitations.
+
 ## Verification limits
 
 Linux, Clang, and MSVC were not run locally on the original PC. No

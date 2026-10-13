@@ -109,6 +109,15 @@ redundant operation the change targets. Profiling self-time percentages can be
 ambiguous for merged/weak library symbols; the claim here uses these auditable
 call counts and the separate uninstrumented paired experiment.
 
+The candidate profile from
+[run 38413079560](https://github.com/HamzaMemon-G/cpp-exchange-engine/actions/runs/38413079560)
+contains no price-map `find` entries for the same cancellation stream. Baseline
+and candidate command fingerprints, result counts and final book metrics match.
+The retained [baseline call graph](profiles/baseline-cancel-heavy-gprof.txt) and
+[candidate call graph](profiles/candidate-cancel-heavy-gprof.txt) allow this
+operation-count observation to be checked after hosted artifacts expire. Their
+benchmark text files retain the exact profile/shape/count/compiler settings.
+
 ## Reproduction
 
 Build the baseline and candidate in separate directories with identical Release
