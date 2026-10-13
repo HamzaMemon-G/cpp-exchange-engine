@@ -16,7 +16,9 @@ jobs:
       - name: Build instrumented Release
         run: >-
           cmake -S . -B build-profile -DCMAKE_BUILD_TYPE=Release
-          -DCMAKE_CXX_COMPILER=g++ -DCMAKE_CXX_FLAGS=-pg -DCMAKE_EXE_LINKER_FLAGS=-pg
+          -DCMAKE_CXX_COMPILER=g++
+          "-DCMAKE_CXX_FLAGS=-pg -fno-inline -fno-ipa-icf -fno-optimize-sibling-calls"
+          -DCMAKE_EXE_LINKER_FLAGS=-pg
       - run: cmake --build build-profile --parallel 2
       - name: Capture whole-process profiles
         run: |
