@@ -4,7 +4,7 @@
 namespace exchange {
 std::vector<Command> synthetic_workload(std::size_t count, std::uint64_t seed);
 
-enum class WorkloadProfile { Mixed, Deep, CancelHeavy, Sweep, IdChurn };
+enum class WorkloadProfile { Mixed, Deep, CancelHeavy, Sweep, IdChurn, Aggressive };
 WorkloadProfile parse_profile(std::string_view name);
 std::string_view profile_name(WorkloadProfile profile);
 struct WorkloadOptions {

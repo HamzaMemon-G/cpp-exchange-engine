@@ -20,10 +20,10 @@ std::uint64_t Engine::next_sequence() {
         throw std::overflow_error("command sequence exhausted");
     return ++sequence_;
 }
-template<class Book> void Engine::match(Order& incoming, Book& book, Result& result) {
+template<class Book> void Engine::match(Order& incoming, Book& book, Result& result, bool market) {
     while (incoming.quantity > 0 && !book.empty()) {
         auto level = book.begin();
-        if (incoming.side == Side::Buy ? level->first > incoming.price : level->first < incoming.price)
+        if (!market && (incoming.side == Side::Buy ? level->first > incoming.price : level->first < incoming.price))
             break;
         auto& queue = level->second;
         auto& maker = queue.front();
@@ -47,9 +47,16 @@ template<class Book> void Engine::rest(Order order, Book& book) {
     else
         active_.emplace(order.id, Location{Level{std::in_place_index<1>, level}, std::prev(queue.end())});
 }
-Result Engine::add(OrderId id, Side side, Value price, Value quantity) {
+Result Engine::add(OrderId id, Side side, Value price, Value quantity, TimeInForce tif) {
+    return submit(id, side, price, quantity, tif, false);
+}
+Result Engine::market(OrderId id, Side side, Value quantity) {
+    return submit(id, side, 0, quantity, TimeInForce::Ioc, true);
+}
+Result Engine::submit(OrderId id, Side side, Value price, Value quantity, TimeInForce tif, bool market) {
     Result result{next_sequence(), Status::Accepted, {}};
-    if (id == 0 || price <= 0 || quantity <= 0 || (side != Side::Buy && side != Side::Sell)) {
+    if (id == 0 || (!market && price <= 0) || quantity <= 0 ||
+        (side != Side::Buy && side != Side::Sell) || (tif != TimeInForce::Gtc && tif != TimeInForce::Ioc)) {
         result.status = Status::InvalidOrder;
         return result;
     }
@@ -59,20 +66,16 @@ Result Engine::add(OrderId id, Side side, Value price, Value quantity) {
     }
     used_.insert(id);
     Order incoming{id, side, price, quantity, result.sequence};
-    if (side == Side::Buy) match(incoming, asks_, result);
-    else match(incoming, bids_, result);
+    if (side == Side::Buy) match(incoming, asks_, result, market);
+    else match(incoming, bids_, result, market);
     if (incoming.quantity > 0) {
-        if (side == Side::Buy) rest(incoming, bids_);
+        if (tif == TimeInForce::Ioc) result.expired_quantity = incoming.quantity;
+        else if (side == Side::Buy) rest(incoming, bids_);
         else rest(incoming, asks_);
     }
     return result;
 }
-Result Engine::cancel(OrderId id) {
-    Result result{next_sequence(), Status::Accepted, {}};
-    if (id == 0) { result.status = Status::InvalidOrder; return result; }
-    const auto found = active_.find(id);
-    if (found == active_.end()) { result.status = Status::UnknownId; return result; }
-    const auto loc = found->second;
+void Engine::remove(const Location& loc) {
     if (loc.level.index() == 0) {
         const auto level = std::get<0>(loc.level);
         level->second.erase(loc.order);
@@ -82,7 +85,40 @@ Result Engine::cancel(OrderId id) {
         level->second.erase(loc.order);
         if (level->second.empty()) asks_.erase(level);
     }
+}
+Result Engine::cancel(OrderId id) {
+    Result result{next_sequence(), Status::Accepted, {}};
+    if (id == 0) { result.status = Status::InvalidOrder; return result; }
+    const auto found = active_.find(id);
+    if (found == active_.end()) { result.status = Status::UnknownId; return result; }
+    remove(found->second);
     active_.erase(found);
+    return result;
+}
+Result Engine::amend(OrderId id, Value price, Value remaining_quantity) {
+    Result result{next_sequence(), Status::Accepted, {}};
+    if (id == 0 || price <= 0 || remaining_quantity <= 0) {
+        result.status = Status::InvalidOrder;
+        return result;
+    }
+    const auto found = active_.find(id);
+    if (found == active_.end()) { result.status = Status::UnknownId; return result; }
+    auto incoming = *found->second.order;
+    if (price == incoming.price && remaining_quantity <= incoming.quantity) {
+        found->second.order->quantity = remaining_quantity; // retain original queue position and sequence
+        return result;
+    }
+    remove(found->second);
+    active_.erase(found); // ID remains reserved; this is the same active order, not a new submission
+    incoming.price = price;
+    incoming.quantity = remaining_quantity;
+    incoming.sequence = result.sequence;
+    if (incoming.side == Side::Buy) match(incoming, asks_, result, false);
+    else match(incoming, bids_, result, false);
+    if (incoming.quantity > 0) {
+        if (incoming.side == Side::Buy) rest(incoming, bids_);
+        else rest(incoming, asks_);
+    }
     return result;
 }
 std::vector<Order> Engine::orders() const {

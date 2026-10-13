@@ -9,7 +9,8 @@ WorkloadProfile parse_profile(std::string_view name) {
     if (name == "cancel-heavy") return WorkloadProfile::CancelHeavy;
     if (name == "sweep") return WorkloadProfile::Sweep;
     if (name == "id-churn") return WorkloadProfile::IdChurn;
-    throw std::invalid_argument("profile: mixed, deep, cancel-heavy, sweep, id-churn");
+    if (name == "aggressive") return WorkloadProfile::Aggressive;
+    throw std::invalid_argument("profile: mixed, deep, cancel-heavy, sweep, id-churn, aggressive");
 }
 std::string_view profile_name(WorkloadProfile profile) {
     switch (profile) {
@@ -18,6 +19,7 @@ std::string_view profile_name(WorkloadProfile profile) {
     case WorkloadProfile::CancelHeavy: return "cancel-heavy";
     case WorkloadProfile::Sweep: return "sweep";
     case WorkloadProfile::IdChurn: return "id-churn";
+    case WorkloadProfile::Aggressive: return "aggressive";
     }
     throw std::invalid_argument("invalid workload profile");
 }
@@ -59,6 +61,24 @@ Workload benchmark_workload(const WorkloadOptions& options) {
             workload.commands.push_back({CommandKind::Add, id, Side::Buy, 100, 1});
             if (workload.commands.size() < options.count)
                 workload.commands.push_back({CommandKind::Cancel, id, Side::Buy, 0, 0});
+        }
+        return workload;
+    }
+    if (options.profile == WorkloadProfile::Aggressive) {
+        std::mt19937_64 random(options.seed);
+        for (std::size_t i = 0; i < options.count; ++i) {
+            const auto action = random()%100;
+            if (action < 20 && next_id > 1) {
+                const auto id = 1+random()%(next_id-1);
+                if (action < 10) workload.commands.push_back({CommandKind::Cancel, id, Side::Buy, 0, 0});
+                else workload.commands.push_back({CommandKind::Amend, id, Side::Buy,
+                    static_cast<Value>(9900+random()%201), static_cast<Value>(1+random()%100)});
+            } else {
+                const auto kind = action < 70 ? CommandKind::Add : action < 85 ? CommandKind::Ioc : CommandKind::Market;
+                const auto side = random()%2 == 0 ? Side::Buy : Side::Sell;
+                const auto price = kind == CommandKind::Market ? 0 : static_cast<Value>(9900+random()%201);
+                workload.commands.push_back({kind, next_id++, side, price, static_cast<Value>(1+random()%100)});
+            }
         }
         return workload;
     }

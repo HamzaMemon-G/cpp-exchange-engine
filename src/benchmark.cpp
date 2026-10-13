@@ -18,11 +18,19 @@ std::uint64_t number(std::string_view s) {
     return n;
 }
 struct Stats {
-    std::uint64_t accepted{}, rejected{}, trades{}, volume{}, adds{}, cancels{};
+    std::uint64_t accepted{}, rejected{}, trades{}, volume{}, adds{}, cancels{}, iocs{}, markets{}, amendments{}, expired{};
     bool operator==(const Stats&) const = default;
 };
 void account(Stats& stats, const Command& command, const Result& result) {
-    if (command.kind == CommandKind::Add) ++stats.adds; else ++stats.cancels;
+    switch (command.kind) {
+    case CommandKind::Add: ++stats.adds; break;
+    case CommandKind::Cancel: ++stats.cancels; break;
+    case CommandKind::Ioc: ++stats.iocs; break;
+    case CommandKind::Market: ++stats.markets; break;
+    case CommandKind::Amend: ++stats.amendments; break;
+    default: throw std::runtime_error("unexpected benchmark command");
+    }
+    stats.expired += static_cast<std::uint64_t>(result.expired_quantity);
     if (result.status == Status::Accepted) ++stats.accepted; else ++stats.rejected;
     stats.trades += result.trades.size();
     for (const auto& t : result.trades) stats.volume += static_cast<std::uint64_t>(t.quantity);
@@ -36,6 +44,8 @@ void setup(Engine& engine, const Workload& workload) {
 void print_stats(const Stats& stats) {
     std::cout << " accepted=" << stats.accepted << " rejected=" << stats.rejected
               << " adds=" << stats.adds << " cancels=" << stats.cancels
+              << " iocs=" << stats.iocs << " markets=" << stats.markets
+              << " amendments=" << stats.amendments << " expired=" << stats.expired
               << " trades=" << stats.trades << " volume=" << stats.volume;
 }
 void print_metrics(const Engine& engine) {
@@ -61,6 +71,11 @@ void hash_result(std::uint64_t& hash, const Result& result) {
         hash_word(hash, trade.taker);
         hash_word(hash, static_cast<std::uint64_t>(trade.price));
         hash_word(hash, static_cast<std::uint64_t>(trade.quantity));
+    }
+    // Keep historical GTC fingerprints stable; immediate expiry adds a tagged field.
+    if (result.expired_quantity != 0) {
+        hash_word(hash, 0x45585049524544ULL);
+        hash_word(hash, static_cast<std::uint64_t>(result.expired_quantity));
     }
 }
 void hash_book(std::uint64_t& hash, const std::vector<Order>& orders) {
@@ -109,7 +124,7 @@ int main(int argc, char** argv) {
             if (arg == "--memory-only") { memory_only = true; continue; }
             if (arg == "--help") {
                 std::cout << "exchange_bench [--orders N] [--seed N] [--samples N] [--latency]\n"
-                          << "  [--profile mixed|deep|cancel-heavy|sweep|id-churn] [--levels N] [--depth N]\n"
+                          << "  [--profile mixed|deep|cancel-heavy|sweep|id-churn|aggressive] [--levels N] [--depth N]\n"
                           << "  --memory-only: fresh-process memory pass; no warm-up or throughput timing\n";
                 return 0;
             }
