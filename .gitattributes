@@ -2,5 +2,7 @@
 docs/paired-suite-raw.json linguist-generated=true
 docs/features-compatibility-suite-raw.json linguist-generated=true
 docs/order-type-suite-raw.json linguist-generated=true
+docs/amend-splice-suite-raw.json linguist-generated=true
+docs/amend-compatibility-raw.json linguist-generated=true
 docs/profiles/*.txt linguist-generated=true
 docs/fuzz-run-*.txt linguist-generated=true
