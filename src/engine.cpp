@@ -104,8 +104,20 @@ Result Engine::amend(OrderId id, Value price, Value remaining_quantity) {
     const auto found = active_.find(id);
     if (found == active_.end()) { result.status = Status::UnknownId; return result; }
     auto incoming = *found->second.order;
-    if (price == incoming.price && remaining_quantity <= incoming.quantity) {
-        found->second.order->quantity = remaining_quantity; // retain original queue position and sequence
+    if (price == incoming.price) {
+        auto& order = *found->second.order;
+        if (remaining_quantity > incoming.quantity) {
+            // The existing price cannot cross the opposite book. An increase
+            // only loses FIFO priority; splice preserves the node and ID handles.
+            order.sequence = result.sequence;
+            auto move_to_back = [&](auto level) {
+                auto& queue = level->second;
+                queue.splice(queue.end(), queue, found->second.order);
+            };
+            if (found->second.level.index() == 0) move_to_back(std::get<0>(found->second.level));
+            else move_to_back(std::get<1>(found->second.level));
+        }
+        order.quantity = remaining_quantity; // reductions/no-ops retain original sequence and position
         return result;
     }
     remove(found->second);
