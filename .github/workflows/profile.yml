@@ -1,6 +1,6 @@
 name: CPU profile
 on:
-  pull_request:
+  push:
     paths:
       - 'src/engine.cpp'
       - 'src/benchmark.cpp'
