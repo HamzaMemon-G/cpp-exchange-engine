@@ -39,6 +39,7 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size
         }
         if (command.kind == exchange::CommandKind::Cancel) {
             check(result.trades.empty() && result.expired_quantity == 0);
+            for (const auto& order : engine.orders()) check(order.id != command.id);
             continue;
         }
         auto side = command.side;
@@ -58,7 +59,15 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size
         if (command.kind == exchange::CommandKind::Ioc || command.kind == exchange::CommandKind::Market) {
             check(result.expired_quantity == remaining);
             for (const auto& order : engine.orders()) check(order.id != command.id);
-        } else check(result.expired_quantity == 0);
+        } else {
+            check(result.expired_quantity == 0);
+            bool found = false;
+            for (const auto& order : engine.orders()) if (order.id == command.id) {
+                check(order.quantity == remaining && order.price == command.price && order.side == side);
+                found = true;
+            }
+            check(found == (remaining > 0));
+        }
     }
     return 0;
 }
