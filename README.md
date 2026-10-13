@@ -218,6 +218,9 @@ validated-copy upgrades and the new documented example are also tested.
 All 65,536 four-command streams from a 16-command alphabet are independently
 checked too (262,144 additional command attempts), including repeated IDs,
 amendments, both crossing directions and immediate orders.
+Optional [Clang/Linux fuzzing](docs/FUZZING.md) mutates command text under address
+and undefined-behavior sanitizers and checks parsing/state invariants. Its bounded
+hosted runs supplement the reference tests; see validation for actual results.
 
 ```sh
 ./build/exchange_generate --orders 100000 --seed 42 > workload.txt
