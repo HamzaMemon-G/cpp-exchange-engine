@@ -8,6 +8,8 @@ on:
       - 'include/exchange/**'
       - '.github/workflows/profile.yml'
   workflow_dispatch:
+permissions:
+  contents: read
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -15,7 +17,9 @@ jobs:
   gprof:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Build instrumented Release
         run: >-
           cmake -S . -B build-profile -DCMAKE_BUILD_TYPE=Release
@@ -26,14 +30,14 @@ jobs:
       - name: Capture whole-process profiles
         run: |
           mkdir -p profiles
-          for profile in mixed cancel-heavy deep sweep id-churn; do
+          for profile in mixed cancel-heavy deep sweep id-churn aggressive amend-heavy; do
             ./build-profile/exchange_bench --profile "$profile" --orders 1000000 --samples 5 > "profiles/$profile-benchmark.txt"
             gprof -b ./build-profile/exchange_bench gmon.out > "profiles/$profile-gprof.txt"
             rm gmon.out
           done
           g++ --version > profiles/compiler.txt
           lscpu > profiles/cpu.txt
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: cpu-profiles
           path: profiles/

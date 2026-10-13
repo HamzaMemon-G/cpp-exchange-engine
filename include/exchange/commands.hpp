@@ -3,7 +3,7 @@
 #include <string_view>
 
 namespace exchange {
-enum class CommandKind { Add, Cancel, Book, Quit, Empty };
+enum class CommandKind { Add, Cancel, Book, Quit, Empty, Ioc, Market, Amend };
 struct Command {
     CommandKind kind{CommandKind::Empty};
     OrderId id{};

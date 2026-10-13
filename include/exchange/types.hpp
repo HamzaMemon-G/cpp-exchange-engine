@@ -7,6 +7,7 @@ namespace exchange {
 using OrderId = std::uint64_t;
 using Value = std::int64_t;
 enum class Side { Buy, Sell };
+enum class TimeInForce { Gtc, Ioc };
 struct Order {
     OrderId id{};
     Side side{};
@@ -28,6 +29,7 @@ struct Result {
     std::uint64_t sequence{};
     Status status{};
     std::vector<Trade> trades;
+    Value expired_quantity{}; // unmatched IOC/market quantity; never rests
     bool operator==(const Result&) const = default;
 };
 std::string status_name(Status status);

@@ -73,6 +73,66 @@ fresh memory processes with matching command/result fingerprints, counters and
 book metrics across the baseline and candidate. See [PERFORMANCE.md](PERFORMANCE.md)
 and its retained raw outputs for the experiment and measurement limitations.
 
+## Market, IOC, amendments and parser fuzzing
+
+The new source at `93dd61d1aedd568a9b24adf2f472597a26593cd3` passed
+[hosted run 38419796577](https://github.com/HamzaMemon-G/cpp-exchange-engine/actions/runs/38419796577).
+All four CTest entries passed in GCC 13.3 / Clang 18.1.3 Debug with ASan/UBSan,
+GCC checked iterators, and MSVC 19.51 Release. The inspected job logs contain
+no C++ compiler warnings. Local LLVM-MinGW Clang 23.1.3 Debug and Release also
+pass all four entries.
+
+New coverage includes:
+
+* Immediate limit/market matching on both sides, maker prices, FIFO, maximum
+  tick/quantity boundaries, explicit expiry and lifetime ID reservation.
+* Remaining-quantity amendments: retained priority for same-price reductions
+  and no-ops; new priority for increases/price changes; crossing and full fills;
+  invalid/unknown IDs and level handles after engine moves.
+* 160,000 total randomized command attempts: 40,000 historical GTC/cancel,
+  60,000 with immediate orders, and 60,000 including amendments. Every result
+  (including expired quantity) and book matches the independent flat-vector
+  model, with invariants and quantity conservation checked. The amendment
+  stream deliberately targets live orders as well as old/missing IDs.
+* All 65,536 four-command streams from a 16-command alphabet, comparing every
+  intermediate result and book: 262,144 additional command executions.
+* Seven reproducible benchmark profiles checked against the reference, plus
+  CLI argument, latency and fresh-memory smoke checks. Timing is never a test
+  pass/fail threshold.
+* V1 replay/ADD-CANCEL append compatibility; V1 refusal of new commands without
+  writing; V2 replay/resume including expiry and amendments; validated-copy
+  upgrades, unchanged sources, overwrite refusal and reserved IDs across upgrade.
+* The new documented command/output example is checked byte for byte by CLI tests.
+
+The first optional Clang 18.1.3/Linux fuzz pass at
+`6fe539ed5107c38bc530b659091ec9be0179ac7f` succeeded:
+[run 38420495243](https://github.com/HamzaMemon-G/cpp-exchange-engine/actions/runs/38420495243).
+Its log reports **574,526 mutated text inputs in 121 seconds**, with no sanitizer
+finding or failed property check. Inputs are bounded to 4,096 bytes / 64 commands;
+this count is not a count of accepted trading commands. See [FUZZING.md](FUZZING.md)
+for reproduction and limits. The [artifact](https://github.com/HamzaMemon-G/cpp-exchange-engine/actions/runs/38420495243/artifacts/11826367571)
+contains its full fuzzer log.
+
+The observed Node 20 action warnings prompted verified release updates to
+[checkout v7.0.1](https://github.com/actions/checkout/releases/tag/v7.0.1) and
+[upload-artifact v7.0.2](https://github.com/actions/upload-artifact/releases/tag/v7.0.2),
+pinned by exact commits. Workflows use read-only repository permissions and do
+not retain checkout credentials. The updated source/workflows at
+`85637382544b690746627d56008549326cf5f212` passed
+[all four CTest configurations](https://github.com/HamzaMemon-G/cpp-exchange-engine/actions/runs/38421149699)
+and the [stronger fuzz pass](https://github.com/HamzaMemon-G/cpp-exchange-engine/actions/runs/38421149668):
+573,355 mutated inputs in 121 seconds, with no findings. Its
+[retained raw output](fuzz-run-8563738.txt) includes the exact command and source.
+The updated [seven-profile workflow](https://github.com/HamzaMemon-G/cpp-exchange-engine/actions/runs/38421141254)
+also passed and uploaded its CPU profile artifact. Instrumented gprof rates are
+not Release performance measurements. Later commits need their own successful checks.
+
+The feature measurements completed 150 historical-stream timing processes plus
+30 memory processes with identical baseline/candidate semantic fingerprints,
+then 30 timing and six memory processes for aggressive/live-amendment workloads.
+[ORDER_TYPE_MEASUREMENTS.md](ORDER_TYPE_MEASUREMENTS.md) retains observations and
+limitations, including the small observed slowdowns and changed accounting cost.
+
 ## Verification limits
 
 Linux, Clang, and MSVC were not run locally on the original PC. No

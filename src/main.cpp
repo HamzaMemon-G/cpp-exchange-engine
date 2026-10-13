@@ -6,18 +6,29 @@
 using namespace exchange;
 int main(int argc, char** argv) {
     try {
-        std::filesystem::path input_path, log_path, replay_path;
+        std::filesystem::path input_path, log_path, replay_path, upgrade_source, upgrade_destination;
         for (int i = 1; i < argc; ++i) {
             const std::string arg = argv[i];
             if (arg == "--help") {
-                std::cout << "exchange_cli [--input FILE] [--log FILE]\nexchange_cli --replay FILE\n";
+                std::cout << "exchange_cli [--input FILE] [--log FILE]\nexchange_cli --replay FILE\n"
+                          << "exchange_cli --upgrade-log SOURCE --output-log DESTINATION\n";
                 return 0;
             }
-            if ((arg != "--input" && arg != "--log" && arg != "--replay") || i+1 >= argc)
+            if ((arg != "--input" && arg != "--log" && arg != "--replay" &&
+                 arg != "--upgrade-log" && arg != "--output-log") || i+1 >= argc)
                 throw std::invalid_argument("unknown or incomplete option: " + arg);
-            auto& path = arg == "--input" ? input_path : arg == "--log" ? log_path : replay_path;
+            auto& path = arg == "--input" ? input_path : arg == "--log" ? log_path :
+                         arg == "--replay" ? replay_path : arg == "--upgrade-log" ? upgrade_source : upgrade_destination;
             if (!path.empty()) throw std::invalid_argument("duplicate option: " + arg);
             path = argv[++i];
+        }
+        if (!upgrade_source.empty() || !upgrade_destination.empty()) {
+            if (upgrade_source.empty() || upgrade_destination.empty() || !input_path.empty() ||
+                !log_path.empty() || !replay_path.empty())
+                throw std::invalid_argument("upgrade requires --upgrade-log SOURCE --output-log DESTINATION exclusively");
+            upgrade_log(upgrade_source, upgrade_destination);
+            std::cout << "UPGRADED journal=" << upgrade_destination.string() << '\n';
+            return 0;
         }
         if (!replay_path.empty()) {
             if (!input_path.empty() || !log_path.empty()) throw std::invalid_argument("--replay is exclusive");
@@ -65,6 +76,9 @@ int main(int argc, char** argv) {
                 std::cout << "TRADE sequence=" << trade.sequence << " maker=" << trade.maker
                           << " taker=" << trade.taker << " price=" << trade.price
                           << " quantity=" << trade.quantity << '\n';
+            if (result.expired_quantity > 0)
+                std::cout << "EXPIRED sequence=" << result.sequence << " id=" << command.id
+                          << " quantity=" << result.expired_quantity << '\n';
         }
         if (input.bad()) throw std::runtime_error("input read failure");
         if (!std::cout) throw std::runtime_error("output write failure");

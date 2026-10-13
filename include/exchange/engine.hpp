@@ -20,7 +20,9 @@ public:
     Engine& operator=(const Engine&) = delete;
     Engine(Engine&&) = default;
     Engine& operator=(Engine&&) = default;
-    Result add(OrderId id, Side side, Value price, Value quantity);
+    Result add(OrderId id, Side side, Value price, Value quantity, TimeInForce tif = TimeInForce::Gtc);
+    Result market(OrderId id, Side side, Value quantity); // consumes available liquidity, then expires
+    Result amend(OrderId id, Value price, Value remaining_quantity); // side/ID remain fixed
     Result cancel(OrderId id);
     std::vector<Order> orders() const; // buys descending, then sells ascending; FIFO
     std::uint64_t sequence() const { return sequence_; }
@@ -34,13 +36,15 @@ private:
     // a standard library may use the same iterator type for both map types.
     using Level = std::variant<Bids::iterator, Asks::iterator>;
     struct Location { Level level; Queue::iterator order; };
+    void remove(const Location& location);
     Bids bids_;
     Asks asks_;
     std::unordered_map<OrderId, Location> active_;
     std::unordered_set<OrderId> used_;
     std::uint64_t sequence_{};
     std::uint64_t next_sequence();
-    template<class Book> void match(Order& incoming, Book& opposite, Result& result);
+    Result submit(OrderId id, Side side, Value price, Value quantity, TimeInForce tif, bool market);
+    template<class Book> void match(Order& incoming, Book& opposite, Result& result, bool market);
     template<class Book> void rest(Order order, Book& book);
 };
 }

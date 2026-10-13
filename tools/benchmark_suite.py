@@ -35,6 +35,7 @@ def run(binary, case, seed, args, memory=False):
     semantic = {key: summary[key] for key in
                 ("accepted", "rejected", "adds", "cancels", "trades", "volume", "result_fingerprint")}
     semantic.update({key: book[key] for key in ("active_orders", "bid_levels", "ask_levels", "reserved_ids")})
+    semantic.update({key: summary.get(key, 0) for key in ("iocs", "markets", "amendments", "expired")})
     semantic["workload_fingerprint"] = metadata["workload_fingerprint"]
     return {"command": command, "stdout": process.stdout, "stderr": process.stderr,
             "metadata": metadata, "summary": summary, "book": book, "semantic": semantic}
@@ -50,6 +51,8 @@ def main():
     parser.add_argument("--seeds", type=int, nargs="+", default=[42, 43, 44])
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--machine", default="unspecified")
+    parser.add_argument("--profiles", nargs="+", choices=["mixed", "deep", "cancel-heavy", "sweep", "id-churn", "aggressive", "amend-heavy"],
+                        default=["mixed", "deep", "cancel-heavy", "sweep", "id-churn"])
     args = parser.parse_args()
     if not 1 <= args.orders <= 10000000 or not 1 <= args.samples <= 100 or not 1 <= args.rounds <= 100:
         parser.error("orders 1..10000000; samples and rounds 1..100")
@@ -57,6 +60,8 @@ def main():
         parser.error("seeds must be unsigned 64-bit integers")
     if len(set(args.seeds)) != len(args.seeds):
         parser.error("seeds must be distinct")
+    if len(set(args.profiles)) != len(args.profiles):
+        parser.error("profiles must be distinct")
     binaries = {"candidate": args.binary.resolve()}
     if args.baseline:
         binaries = {"baseline": args.baseline.resolve(), **binaries}
@@ -64,11 +69,15 @@ def main():
              {"name": "deep", "profile": "deep", "levels": 4096, "depth": 8},
              {"name": "cancel-heavy", "profile": "cancel-heavy", "levels": 4096, "depth": 8},
              {"name": "sweep", "profile": "sweep", "levels": 64, "depth": 8},
-             {"name": "id-churn", "profile": "id-churn", "levels": 1, "depth": 1}]
+             {"name": "id-churn", "profile": "id-churn", "levels": 1, "depth": 1},
+             {"name": "aggressive", "profile": "aggressive", "levels": 1, "depth": 1},
+             {"name": "amend-heavy", "profile": "amend-heavy", "levels": 4096, "depth": 8}]
+    cases = [case for case in cases if case["profile"] in args.profiles]
     report = {"created_utc": datetime.now(timezone.utc).isoformat(), "platform": platform.platform(),
               "machine": args.machine, "python": platform.python_version(),
-              "method": "alternating AB/BA fresh processes; each process warms up once; harness uses upper-middle median; suite uses statistics.median",
-              "orders": args.orders, "samples": args.samples, "rounds": args.rounds, "seeds": args.seeds,
+              "method": ("alternating AB/BA fresh processes" if args.baseline else "fresh candidate processes") +
+                        "; each process warms up once; harness uses upper-middle median; suite uses statistics.median",
+              "orders": args.orders, "samples": args.samples, "rounds": args.rounds, "seeds": args.seeds, "profiles": args.profiles,
               "binaries": {label: {"path": str(path), "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
                            for label, path in binaries.items()}, "runs": [], "memory_runs": [], "summary": []}
     expected = {}
