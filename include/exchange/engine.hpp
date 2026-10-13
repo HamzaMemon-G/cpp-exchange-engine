@@ -5,8 +5,13 @@
 #include <map>
 #include <unordered_map>
 #include <unordered_set>
+#include <variant>
 
 namespace exchange {
+struct BookMetrics {
+    std::size_t active_orders{}, bid_levels{}, ask_levels{}, reserved_ids{};
+    bool operator==(const BookMetrics&) const = default;
+};
 // One engine represents one instrument. Not thread safe; no callbacks or I/O.
 class Engine {
 public:
@@ -20,11 +25,15 @@ public:
     std::vector<Order> orders() const; // buys descending, then sells ascending; FIFO
     std::uint64_t sequence() const { return sequence_; }
     bool valid() const; // O(n) diagnostic, not called by the hot path
+    BookMetrics metrics() const { return {active_.size(), bids_.size(), asks_.size(), used_.size()}; }
 private:
     using Queue = std::list<Order>;
     using Bids = std::map<Value, Queue, std::greater<Value>>;
     using Asks = std::map<Value, Queue>;
-    struct Location { Side side; Value price; Queue::iterator order; };
+    // Index 0 is a bid level, index 1 an ask level. Use explicit indices because
+    // a standard library may use the same iterator type for both map types.
+    using Level = std::variant<Bids::iterator, Asks::iterator>;
+    struct Location { Level level; Queue::iterator order; };
     Bids bids_;
     Asks asks_;
     std::unordered_map<OrderId, Location> active_;

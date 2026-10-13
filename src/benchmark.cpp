@@ -1,4 +1,5 @@
 #include "exchange/workload.hpp"
+#include "process_memory.hpp"
 #include <algorithm>
 #include <charconv>
 #include <chrono>
@@ -17,34 +18,121 @@ std::uint64_t number(std::string_view s) {
     return n;
 }
 struct Stats {
-    std::uint64_t accepted{}, rejected{}, trades{}, volume{};
+    std::uint64_t accepted{}, rejected{}, trades{}, volume{}, adds{}, cancels{};
     bool operator==(const Stats&) const = default;
 };
-void account(Stats& stats, const Result& result) {
+void account(Stats& stats, const Command& command, const Result& result) {
+    if (command.kind == CommandKind::Add) ++stats.adds; else ++stats.cancels;
     if (result.status == Status::Accepted) ++stats.accepted; else ++stats.rejected;
     stats.trades += result.trades.size();
     for (const auto& t : result.trades) stats.volume += static_cast<std::uint64_t>(t.quantity);
 }
+void setup(Engine& engine, const Workload& workload) {
+    for (const auto& command : workload.setup) {
+        if (execute(engine, command).status != Status::Accepted)
+            throw std::runtime_error("setup command rejected");
+    }
+}
+void print_stats(const Stats& stats) {
+    std::cout << " accepted=" << stats.accepted << " rejected=" << stats.rejected
+              << " adds=" << stats.adds << " cancels=" << stats.cancels
+              << " trades=" << stats.trades << " volume=" << stats.volume;
+}
+void print_metrics(const Engine& engine) {
+    const auto metrics = engine.metrics();
+    std::cout << " active_orders=" << metrics.active_orders << " bid_levels=" << metrics.bid_levels
+              << " ask_levels=" << metrics.ask_levels << " reserved_ids=" << metrics.reserved_ids;
+}
+// Defined integer encoding: stable across compilers, endianness and size_t width.
+void hash_word(std::uint64_t& hash, std::uint64_t value) {
+    for (int byte = 0; byte < 8; ++byte) {
+        hash ^= value & 255;
+        hash *= 1099511628211ULL;
+        value >>= 8;
+    }
+}
+void hash_result(std::uint64_t& hash, const Result& result) {
+    hash_word(hash, result.sequence);
+    hash_word(hash, static_cast<std::uint64_t>(result.status));
+    hash_word(hash, result.trades.size());
+    for (const auto& trade : result.trades) {
+        hash_word(hash, trade.sequence);
+        hash_word(hash, trade.maker);
+        hash_word(hash, trade.taker);
+        hash_word(hash, static_cast<std::uint64_t>(trade.price));
+        hash_word(hash, static_cast<std::uint64_t>(trade.quantity));
+    }
+}
+void hash_book(std::uint64_t& hash, const std::vector<Order>& orders) {
+    hash_word(hash, orders.size());
+    for (const auto& order : orders) {
+        hash_word(hash, order.id);
+        hash_word(hash, static_cast<std::uint64_t>(order.side));
+        hash_word(hash, static_cast<std::uint64_t>(order.price));
+        hash_word(hash, static_cast<std::uint64_t>(order.quantity));
+        hash_word(hash, order.sequence);
+    }
+}
+std::uint64_t fingerprint(const Workload& workload) {
+    std::uint64_t hash = 14695981039346656037ULL;
+    hash_word(hash, workload.setup.size());
+    for (const auto* commands : {&workload.setup, &workload.commands}) {
+        hash_word(hash, commands->size());
+        for (const auto& c : *commands) {
+            hash_word(hash, static_cast<std::uint64_t>(c.kind));
+            hash_word(hash, c.id);
+            hash_word(hash, static_cast<std::uint64_t>(c.side));
+            hash_word(hash, static_cast<std::uint64_t>(c.price));
+            hash_word(hash, static_cast<std::uint64_t>(c.quantity));
+        }
+    }
+    return hash;
+}
+void memory_checkpoint(std::string_view phase, const Engine* engine = nullptr) {
+    const auto memory = process_memory();
+    std::cout << "memory phase=" << phase << " available=" << memory.available;
+    if (memory.available)
+        std::cout << " resident_bytes=" << memory.resident_bytes
+                  << " process_peak_resident_bytes=" << memory.peak_resident_bytes;
+    if (engine) print_metrics(*engine);
+    std::cout << '\n';
+}
 }
 int main(int argc, char** argv) {
     try {
-        std::uint64_t count = 100000, seed = 42, repetitions = 5;
-        bool latency = false;
+        WorkloadOptions options;
+        std::uint64_t repetitions = 5;
+        bool latency = false, memory_only = false;
         for (int i = 1; i < argc; ++i) {
             const std::string arg = argv[i];
             if (arg == "--latency") { latency = true; continue; }
-            if (arg != "--orders" && arg != "--seed" && arg != "--samples")
-                throw std::invalid_argument("use --orders N --seed N --samples N [--latency]");
+            if (arg == "--memory-only") { memory_only = true; continue; }
+            if (arg == "--help") {
+                std::cout << "exchange_bench [--orders N] [--seed N] [--samples N] [--latency]\n"
+                          << "  [--profile mixed|deep|cancel-heavy|sweep|id-churn] [--levels N] [--depth N]\n"
+                          << "  --memory-only: fresh-process memory pass; no warm-up or throughput timing\n";
+                return 0;
+            }
+            if (arg != "--orders" && arg != "--seed" && arg != "--samples" &&
+                arg != "--profile" && arg != "--levels" && arg != "--depth")
+                throw std::invalid_argument("unknown option; use --help");
             if (++i >= argc) throw std::invalid_argument("missing option value");
+            if (arg == "--profile") { options.profile = parse_profile(argv[i]); continue; }
             const auto value = number(argv[i]);
-            if (arg == "--orders") count = value;
-            else if (arg == "--seed") seed = value;
-            else repetitions = value;
+            if (arg == "--seed") options.seed = value;
+            else if (arg == "--samples") repetitions = value;
+            else {
+                if (value > 10000000) throw std::invalid_argument("numeric option exceeds limit");
+                if (arg == "--orders") options.count = static_cast<std::size_t>(value);
+                else if (arg == "--levels") options.levels = static_cast<std::size_t>(value);
+                else options.depth = static_cast<std::size_t>(value);
+            }
         }
-        if (count == 0 || count > 10000000 || repetitions == 0 || repetitions > 100)
-            throw std::invalid_argument("orders: 1..10000000; samples: 1..100");
-        const auto commands = synthetic_workload(static_cast<std::size_t>(count), seed);
-        { Engine warmup; for (const auto& c : commands) execute(warmup, c); }
+        if (repetitions == 0 || repetitions > 100) throw std::invalid_argument("samples: 1..100");
+        if (memory_only && latency) throw std::invalid_argument("memory-only and latency are separate modes");
+        if (memory_only) memory_checkpoint("before_generation");
+        const auto workload = benchmark_workload(options);
+        const auto& commands = workload.commands;
         std::cout << std::fixed << std::setprecision(3)
                   << "build=" << EXCHANGE_BUILD_MODE << " compiler="
 #if defined(__clang__)
@@ -56,29 +144,77 @@ int main(int argc, char** argv) {
 #else
                   << "unknown"
 #endif
-                  << "\ncommands=" << count << " seed=" << seed << " samples=" << repetitions
-                  << " warmup=one_full_workload\n";
+                  << "\nprofile=" << profile_name(options.profile) << " commands=" << commands.size()
+                  << " seed=" << options.seed << " setup_commands=" << workload.setup.size()
+                  << " levels=" << options.levels << " depth=" << options.depth
+                  << " workload_fingerprint=" << fingerprint(workload) << '\n';
+        if (memory_only) {
+            std::cout << "mode=memory_only warmup=none timing=none\n";
+            memory_checkpoint("after_generation");
+            {
+                Engine engine;
+                setup(engine, workload);
+                memory_checkpoint("after_setup", &engine);
+                Stats stats;
+                std::uint64_t result_hash = 14695981039346656037ULL;
+                for (const auto& c : commands) {
+                    const auto result = execute(engine, c);
+                    account(stats, c, result);
+                    hash_result(result_hash, result);
+                }
+                memory_checkpoint("after_commands", &engine);
+                if (!engine.valid()) throw std::runtime_error("memory pass invariant failure");
+                hash_book(result_hash, engine.orders());
+                std::cout << "memory_result";
+                print_stats(stats);
+                std::cout << " result_fingerprint=" << result_hash << '\n';
+            }
+            memory_checkpoint("after_engine_destruction");
+            return 0;
+        }
+        Stats expected_stats;
+        std::vector<Order> expected_orders;
+        std::uint64_t result_hash = 14695981039346656037ULL;
+        {
+            Engine warmup;
+            setup(warmup, workload);
+            for (const auto& c : commands) {
+                const auto result = execute(warmup, c);
+                account(expected_stats, c, result);
+                hash_result(result_hash, result);
+            }
+            if (!warmup.valid()) throw std::runtime_error("warm-up invariant failure");
+            expected_orders = warmup.orders();
+            hash_book(result_hash, expected_orders);
+        }
+        std::cout << "samples=" << repetitions << " warmup=one_full_workload\n";
         std::vector<double> throughputs;
         Stats final_stats;
         for (std::uint64_t sample = 0; sample < repetitions; ++sample) {
             Engine engine;
+            setup(engine, workload);
             Stats stats;
             const auto start = Clock::now();
-            for (const auto& c : commands) account(stats, execute(engine, c));
+            for (const auto& c : commands) account(stats, c, execute(engine, c));
             const auto end = Clock::now();
-            if (!engine.valid()) throw std::runtime_error("benchmark invariant failure");
+            if (!engine.valid() || stats != expected_stats || engine.orders() != expected_orders ||
+                engine.sequence() != workload.setup.size()+commands.size())
+                throw std::runtime_error("benchmark result mismatch");
             const double seconds = std::chrono::duration<double>(end-start).count();
-            const double rate = static_cast<double>(count)/seconds;
+            const double rate = static_cast<double>(commands.size())/seconds;
             throughputs.push_back(rate);
             std::cout << "sample=" << sample+1 << " seconds=" << seconds << " commands_per_second=" << rate << '\n';
             final_stats = stats;
+            if (sample == 0) { std::cout << "final_book"; print_metrics(engine); std::cout << '\n'; }
         }
         std::sort(throughputs.begin(), throughputs.end());
         std::cout << "median_commands_per_second=" << throughputs[throughputs.size()/2]
-                  << " accepted=" << final_stats.accepted << " rejected=" << final_stats.rejected
-                  << " trades=" << final_stats.trades << " volume=" << final_stats.volume << '\n';
+                  << " result_fingerprint=" << result_hash;
+        print_stats(final_stats);
+        std::cout << '\n';
         if (latency) {
             Engine engine;
+            setup(engine, workload);
             Stats latency_stats;
             std::vector<double> nanoseconds;
             nanoseconds.reserve(commands.size());
@@ -87,9 +223,10 @@ int main(int argc, char** argv) {
                 const auto result = execute(engine, c);
                 const auto end = Clock::now();
                 nanoseconds.push_back(std::chrono::duration<double, std::nano>(end-start).count());
-                account(latency_stats, result);
+                account(latency_stats, c, result);
             }
-            if (latency_stats != final_stats || !engine.valid()) throw std::runtime_error("latency pass mismatch");
+            if (latency_stats != final_stats || !engine.valid() || engine.orders() != expected_orders)
+                throw std::runtime_error("latency pass mismatch");
             std::sort(nanoseconds.begin(), nanoseconds.end());
             auto percentile = [&](std::size_t p) { return nanoseconds[(nanoseconds.size()-1)*p/100]; };
             std::cout << "instrumented_latency_ns p50=" << percentile(50) << " p95=" << percentile(95)

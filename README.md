@@ -50,7 +50,7 @@ ctest --test-dir build-sanitize --output-on-failure
 Sanitizers need compiler/runtime support; this option is intended for GCC/Clang
 on Linux. The CI configuration exercises GCC and Clang with sanitizers on Linux,
 and MSVC Release on Windows. See [validation](docs/VALIDATION.md) for what was
-actually verified locally; adding a workflow does not establish that CI passed.
+actually verified, including the linked successful hosted run.
 
 ## Commands
 
@@ -112,15 +112,16 @@ END_BOOK
 
 `include/exchange/types.hpp` defines value types. `Engine` owns two ordered maps
 of price levels, each with a `std::list<Order>`. An unordered ID map stores
-stable list iterators for cancellation, and an unordered set reserves accepted
+stable price-level and list iterators for cancellation, and an unordered set reserves accepted
 IDs. `commands.cpp` owns text parsing/presentation; the matching core performs
 no I/O. `event_log.cpp` handles persistence/replay. `workload.cpp` generates
 commands shared by the generator and benchmark.
 
-New/exhausted levels cost O(log L) in the ordered maps; list operations are O(1).
-Hash lookups are expected O(1), with the usual worst-case caveat. Matching costs
-O(F + E log L) for F makers visited and E price levels erased. Cancellation finds
-the order by hash lookup, then locates its price level in O(log L). Memory is
+Resting an order looks up/inserts its price level in O(log L); list operations are
+O(1). Hash lookups are expected O(1), with the usual worst-case caveat. Matching
+visits F makers and erases exhausted levels by iterator (amortized O(1) per erase).
+Cancellation uses the ID hash lookup and stored iterators, avoiding a price-tree
+search; list erasure is O(1) and final-level erasure is amortized O(1). Memory is
 O(active orders + price levels + all accepted IDs). The lifetime ID set grows
 even when the active book stays small. Snapshots allocate a vector; invariant
 checks scan the book and are kept out of timed matching.
@@ -129,7 +130,13 @@ This favors readable ownership and cancellation correctness over allocation
 control or cache locality. Allocations and result-vector construction are part
 of the implementation and benchmark. There is one owner thread; callers must
 serialize access. Copies of the engine are disabled; moves preserve list
-iterators and are explicitly tested. Allocation failure is fatal: the engine
+and level iterators and are explicitly tested, including replacing a populated
+destination and cancelling after multilevel fills. Level handles remain valid
+until the last order is removed: every filled maker's ID entry is removed before
+its level can be erased, and cancellation removes the last remaining entry as
+part of the same command. A tagged variant distinguishes bid and ask map handles;
+it uses explicit indices because iterator types can coincide in some libraries.
+Allocation failure is fatal: the engine
 does not promise a strong exception guarantee after memory exhaustion.
 
 ## Journal and replay
@@ -176,8 +183,9 @@ reviewed copy ending at the last complete record; the tool never does this itsel
 
 ## Tests and benchmark
 
-CTest runs three entries: core/reference/replay tests, the documented example,
-and CLI integration covering errors, stdin, append resume, and truncation.
+CTest runs four entries: core/reference/replay tests, the documented example,
+CLI integration covering errors, stdin, append resume, and truncation, and
+benchmark profile/memory-mode/argument checks.
 Core tests cover both crossing directions, maker prices, exact/partial fills,
 multiple levels, retained FIFO, middle/front/back cancellation, lifetime IDs,
 invalid inputs, maximum numeric values, deterministic workload generation, and
@@ -209,6 +217,60 @@ excluding result accounting/destruction and including clock overhead. Percentile
 use floor((N-1)*p/100) sorted sample indices; no interpolation or overhead subtraction.
 An empty clock-pair median helps contextualize instrumented values.
 
+### Broader workloads and memory
+
+The original command stream remains the default `mixed` profile. Additional
+profiles use the same matching engine, with no special core behavior:
+
+| Profile | Workload |
+|---|---|
+| `mixed` | Original 80% adds / 20% attempted cancels, bounded prices; rejections included |
+| `deep` | Preload both sides, then noncrossing adds and roughly 20% successful cancels |
+| `cancel-heavy` | Same preload, roughly 50% successful cancels; approximately steady book size |
+| `sweep` | Repeated batches of resting orders followed by one taker consuming the whole batch; alternates sides |
+| `id-churn` | Alternating add/cancel pairs; small active book, steadily growing reserved-ID set |
+
+`--levels` and `--depth` control the initial book or sweep batch. Deep/cancel-heavy
+setup has `2 * levels * depth` orders and is reapplied before every sample, outside
+timing. Prices stay noncrossing and cancellation targets are tracked during
+generation. If that pool empties, generation adds an order instead; output reports
+the actual mix. Sweep batches have `levels * depth` makers of quantity one and one
+taker; a final incomplete batch is allowed. Mixed and id-churn ignore book shape.
+All profiles process exactly `--orders` timed attempts, excluding setup. The
+product `levels * depth` is limited to 500,000 to bound setup size. The generator
+supports the same profile/shape options and prints setup before the timed commands.
+
+```sh
+./build/exchange_bench --profile cancel-heavy --levels 4096 --depth 8 --orders 200000 --samples 7
+./build/exchange_bench --profile deep --levels 4096 --depth 8 --orders 200000 --memory-only
+python tools/benchmark_suite.py --binary ./build/exchange_bench --output work/suite.json
+```
+
+`--memory-only` runs in a separate fresh process, with no warm-up or throughput
+timing. It reports resident/working-set bytes and the process's lifetime peak
+on Windows/Linux, before generation, after generation, after setup, after commands,
+and after engine destruction. These are process-wide OS observations: they include
+the generated workload, runtime, allocator overhead/retained pages, and engine.
+They are not engine allocation counts or per-order byte estimates. Memory is
+sampled before invariant checking; the final destruction checkpoint can include
+allocations made by that check. Other platforms report memory unavailable.
+
+The standard-library-only Python suite covers five profiles and three seeds,
+collects fresh-process memory passes, and saves exact commands, raw outputs,
+executable hashes and platform metadata. With `--baseline PATH`, it alternates
+baseline/candidate process order and checks workload fingerprints, result counters
+and final-book metrics before comparing paired rates. An untimed warm-up hashes
+every result/trade and final order into a result fingerprint, checked across
+binaries and against the memory pass (a reproducibility check, not a cryptographic
+integrity guarantee). Each harness sample also
+compares its complete final book and counters with the warm-up result, outside
+timing. Independent reference tests cover all specialized profiles. Performance
+has no pass/fail threshold. The optional CPU profile workflow captures whole-process
+GCC/gprof profiles as downloadable artifacts; profiling instrumentation affects
+timing and those rates must not be used as Release throughput measurements.
+
 No timing-based test assertions, CPU affinity, cache flushing, real-market traces,
 network latency, or production-HFT claim. See [measured results](docs/BENCHMARK.md)
-for the actual local run and limitations. TCP/networking is a later milestone.
+for the original local run and limitations, and [the cancellation experiment](docs/PERFORMANCE.md)
+for broader workloads, process memory and paired before/after results.
+TCP/networking is a later milestone.

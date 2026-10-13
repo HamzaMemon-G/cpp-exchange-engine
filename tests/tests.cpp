@@ -151,6 +151,82 @@ void differential() {
     require(synthetic_workload(1000, 42) == synthetic_workload(1000, 42), "workload deterministic");
     require(synthetic_workload(1000, 42) != synthetic_workload(1000, 43), "seed changes workload");
 }
+void workload_profiles() {
+    for (const auto profile : {WorkloadProfile::Mixed, WorkloadProfile::Deep, WorkloadProfile::CancelHeavy,
+                              WorkloadProfile::Sweep, WorkloadProfile::IdChurn}) {
+        const WorkloadOptions options{1000, 42, profile, 16, 3};
+        const auto workload = benchmark_workload(options);
+        const auto repeated = benchmark_workload(options);
+        require(workload.setup == repeated.setup && workload.commands == repeated.commands,
+                "profile reproducibility");
+        require(workload.commands.size() == options.count, "profile exact command count");
+        require(parse_profile(profile_name(profile)) == profile, "profile name roundtrip");
+        Engine engine;
+        Reference reference;
+        std::size_t cancellations = 0, trades = 0;
+        for (const auto* commands : {&workload.setup, &workload.commands}) {
+            for (const auto& command : *commands) {
+                const auto result = execute(engine, command);
+                require(result == reference.run(command), "profile reference result");
+                require(engine.orders() == reference.orders() && engine.valid(), "profile reference book");
+                if (profile != WorkloadProfile::Mixed)
+                    require(result.status == Status::Accepted, "specialized profiles contain no rejections");
+                if (command.kind == CommandKind::Cancel) ++cancellations;
+                trades += result.trades.size();
+                const auto metrics = engine.metrics();
+                require(metrics.active_orders == reference.book.size() && metrics.reserved_ids == reference.used.size(),
+                        "book metrics reflect reference state");
+            }
+        }
+        if (profile == WorkloadProfile::Mixed)
+            require(workload.commands == synthetic_workload(options.count, options.seed) && workload.setup.empty(),
+                    "mixed preserves original workload");
+        if (profile == WorkloadProfile::Deep || profile == WorkloadProfile::CancelHeavy) {
+            require(workload.setup.size() == 2*options.levels*options.depth && trades == 0,
+                    "deep setup and noncrossing workload");
+            require(cancellations > 0, "deep profile exercises successful cancellation");
+        }
+        if (profile == WorkloadProfile::Sweep) require(trades > 500, "sweep exercises many makers");
+        if (profile == WorkloadProfile::IdChurn)
+            require(engine.metrics().active_orders == 0 && engine.metrics().reserved_ids == 500 && cancellations == 500,
+                    "ID churn retains IDs after draining book");
+    }
+    require(benchmark_workload({1, 0, WorkloadProfile::Sweep, 1, 1}).commands.size() == 1,
+            "partial sweep exact bound");
+    require(benchmark_workload({3, 0, WorkloadProfile::IdChurn, 1, 1}).commands.back().kind == CommandKind::Add,
+            "odd churn count");
+    throws([] { parse_profile("bogus"); });
+    throws([] { benchmark_workload({0, 0, WorkloadProfile::Mixed, 1, 1}); });
+    throws([] { benchmark_workload({1, 0, WorkloadProfile::Deep, 0, 1}); });
+    throws([] { benchmark_workload({1, 0, WorkloadProfile::Deep, 1000000, 1000000}); });
+    throws([] { benchmark_workload({1, 0, static_cast<WorkloadProfile>(99), 1, 1}); });
+}
+void move_and_level_lifetime() {
+    Engine source;
+    for (OrderId id = 1; id <= 100; ++id) {
+        source.add(id, Side::Buy, static_cast<Value>(90+id%10), 2);
+        source.add(id+100, Side::Sell, static_cast<Value>(110+id%10), 2);
+    }
+    Engine moved(std::move(source));
+    require(moved.valid(), "move construction populated multilevel index");
+    Engine target;
+    target.add(999, Side::Buy, 1, 1);
+    target.add(1000, Side::Sell, 1000, 1);
+    target = std::move(moved);
+    require(target.valid(), "move assignment replaces populated destination");
+    for (OrderId id = 1; id <= 100; id += 2) {
+        require(target.cancel(id).status == Status::Accepted, "cancel moved bid");
+        require(target.cancel(id+100).status == Status::Accepted, "cancel moved ask");
+        require(target.valid(), "moved cancellation index");
+    }
+    target.add(201, Side::Buy, 120, 100);
+    require(target.valid(), "sweep erases moved ask levels");
+    for (OrderId id = 2; id <= 100; id += 2) {
+        require(target.cancel(id).status == Status::Accepted, "cancel final moved bid levels");
+        require(target.cancel(id+100).status == Status::UnknownId, "filled moved ask absent");
+    }
+    require(target.orders().empty() && target.valid(), "all moved levels removed");
+}
 void write_file(const std::filesystem::path& path, const std::string& contents) {
     std::ofstream out(path, std::ios::binary | std::ios::trunc);
     out << contents;
@@ -208,7 +284,9 @@ void logging() {
 }
 int main() {
     const std::pair<const char*, void(*)()> tests[] = {{"matching", matching}, {"cancellation", cancellation},
-        {"validation and bounds", validation}, {"40000 differential commands", differential}, {"event log", logging}};
+        {"validation and bounds", validation}, {"40000 differential commands", differential},
+        {"workload profiles", workload_profiles}, {"move and level lifetime", move_and_level_lifetime},
+        {"event log", logging}};
     for (const auto& [name, test] : tests) {
         try { test(); std::cout << "PASS " << name << '\n'; }
         catch (const std::exception& e) { std::cerr << "FAIL " << name << ": " << e.what() << '\n'; return 1; }

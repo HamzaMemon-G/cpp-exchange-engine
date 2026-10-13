@@ -1,5 +1,8 @@
 # Local measurements
 
+This records the original PC run. For the later laptop workload suite, memory
+measurements and paired cancellation experiment, see [PERFORMANCE.md](PERFORMANCE.md).
+
 Measured 2026-10-13 on this PC. These are synthetic development measurements,
 not exchange, network, or production HFT performance claims.
 
