@@ -102,8 +102,9 @@ END_BOOK
   limits respect the same price bound but expire their remainder. Market orders
   have no price bound and expire any remainder; neither immediate type rests.
 * Same-price amendments that reduce or retain remaining quantity keep FIFO
-  priority. Increasing remaining quantity or changing price removes the order,
-  matches it again and queues any remainder with the amendment's sequence.
+  priority. Increasing remaining quantity moves the order to its queue's back.
+  Changing price removes it, matches it again and queues any remainder.
+  Both changes give the order the amendment's priority sequence.
   ID and side stay fixed. The quantity argument is the new **remaining** quantity.
 * A successfully accepted ID is reserved for the entire engine session, even
   after cancellation, complete fill or immediate expiry. Duplicates return `DUPLICATE_ID`.
@@ -132,8 +133,10 @@ Resting an order looks up/inserts its price level in O(log L); list operations a
 O(1). Hash lookups are expected O(1), with the usual worst-case caveat. Matching
 visits F makers and erases exhausted levels by iterator (amortized O(1) per erase).
 Cancellation uses the ID hash lookup and stored iterators, avoiding a price-tree
-search; list erasure is O(1) and final-level erasure is amortized O(1). Memory is
-O(active orders + price levels + all accepted IDs). The lifetime ID set grows
+search; list erasure is O(1) and final-level erasure is amortized O(1).
+Same-price amendments use the ID lookup and O(1) quantity update/list splice,
+preserving the stored node handles; price changes follow matching/resting costs.
+Memory is O(active orders + price levels + all accepted IDs). The lifetime ID set grows
 even when the active book stays small. Snapshots allocate a vector; invariant
 checks scan the book and are kept out of timed matching.
 
@@ -313,4 +316,6 @@ for the original local run and limitations, and [the cancellation experiment](do
 for broader workloads, process memory and paired before/after results.
 See [new order-type measurements](docs/ORDER_TYPE_MEASUREMENTS.md) for the added
 workloads and the observed compatibility/performance cost of the feature extension.
+The [same-price amendment experiment](docs/AMEND_PERFORMANCE.md) measures a
+separate node-preserving optimization with an identical before/after harness.
 TCP/networking is a later milestone.

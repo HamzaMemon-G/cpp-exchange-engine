@@ -1,0 +1,10 @@
+build=Release compiler=GCC 13.3.0
+profile=amend-heavy commands=1000000 seed=42 setup_commands=16384 levels=1024 depth=8 workload_fingerprint=15460431368771935274
+samples=5 warmup=one_full_workload
+sample=1 seconds=1.575 commands_per_second=634863.966
+final_book active_orders=66623 bid_levels=1024 ask_levels=1024 reserved_ids=166382
+sample=2 seconds=1.579 commands_per_second=633284.834
+sample=3 seconds=1.559 commands_per_second=641594.083
+sample=4 seconds=1.560 commands_per_second=640916.356
+sample=5 seconds=1.576 commands_per_second=634695.358
+median_commands_per_second=634863.966 result_fingerprint=16320062766969784762 accepted=1000000 rejected=0 adds=149998 cancels=99759 iocs=0 markets=0 amendments=750243 expired=0 trades=0 volume=0

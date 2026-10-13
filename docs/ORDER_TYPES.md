@@ -34,7 +34,7 @@ sets remaining quantity to 8, adding 2 to the previous remaining quantity of 6.
 |---|---|---|
 | Same price, smaller quantity | Retained | Original priority sequence |
 | Same price, same quantity (no-op) | Retained | Original priority sequence |
-| Same price, larger quantity | Removed and reinserted at the back | Amendment command sequence |
+| Same price, larger quantity | Moves to the back | Amendment command sequence |
 | Any price change, including with a reduction | Removed, matched, then remainder queued | Amendment command sequence |
 
 Every amendment attempt consumes one command sequence, including a no-op or
