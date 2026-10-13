@@ -1,0 +1,27 @@
+{
+  "commands": 10000,
+  "seed": 42,
+  "samples": 3,
+  "warmup": "one full CLI process per mode",
+  "workload_sha256": "2606ad8bd2018e26eddaa479381381b15d80ff88bf493f3b420d3469d1128cfe",
+  "method": "perf_counter around subprocess; stdout null; includes startup/parse/format/teardown; journal flush per event",
+  "cli_no_journal": {
+    "seconds": [
+      0.15297799999825656,
+      0.15657339990139008,
+      0.1537864999845624
+    ],
+    "median_seconds": 0.1537864999845624,
+    "median_commands_per_second": 65025.21353307237
+  },
+  "cli_with_journal": {
+    "seconds": [
+      0.24261750001460314,
+      0.24302229995373636,
+      0.24378880008589476
+    ],
+    "median_seconds": 0.24302229995373636,
+    "median_commands_per_second": 41148.487204275814
+  },
+  "generated_workload_replay": "exact final-book bytes matched"
+}

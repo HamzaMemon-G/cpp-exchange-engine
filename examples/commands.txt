@@ -1,0 +1,11 @@
+# A partial resting order retains its FIFO position.
+ADD 1 SELL 100 10
+ADD 2 SELL 100 5
+ADD 3 SELL 101 8
+ADD 4 BUY 101 12
+BOOK
+ADD 5 BUY 101 8
+BOOK
+CANCEL 3
+ADD 6 BUY 99 7
+BOOK

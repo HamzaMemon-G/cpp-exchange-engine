@@ -1,0 +1,21 @@
+RESULT sequence=1 id=1 status=ACCEPTED
+RESULT sequence=2 id=2 status=ACCEPTED
+RESULT sequence=3 id=3 status=ACCEPTED
+RESULT sequence=4 id=4 status=ACCEPTED
+TRADE sequence=4 maker=1 taker=4 price=100 quantity=10
+TRADE sequence=4 maker=2 taker=4 price=100 quantity=2
+BOOK sequence=4
+SELL price=100 remaining=3 id=2 sequence=2
+SELL price=101 remaining=8 id=3 sequence=3
+END_BOOK
+RESULT sequence=5 id=5 status=ACCEPTED
+TRADE sequence=5 maker=2 taker=5 price=100 quantity=3
+TRADE sequence=5 maker=3 taker=5 price=101 quantity=5
+BOOK sequence=5
+SELL price=101 remaining=3 id=3 sequence=3
+END_BOOK
+RESULT sequence=6 id=3 status=ACCEPTED
+RESULT sequence=7 id=6 status=ACCEPTED
+BOOK sequence=7
+BUY price=99 remaining=7 id=6 sequence=7
+END_BOOK
