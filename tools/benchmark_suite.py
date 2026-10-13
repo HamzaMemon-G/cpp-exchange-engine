@@ -55,6 +55,8 @@ def main():
         parser.error("orders 1..10000000; samples and rounds 1..100")
     if not args.seeds or any(seed < 0 or seed >= 2**64 for seed in args.seeds):
         parser.error("seeds must be unsigned 64-bit integers")
+    if len(set(args.seeds)) != len(args.seeds):
+        parser.error("seeds must be distinct")
     binaries = {"candidate": args.binary.resolve()}
     if args.baseline:
         binaries = {"baseline": args.baseline.resolve(), **binaries}
@@ -65,7 +67,7 @@ def main():
              {"name": "id-churn", "profile": "id-churn", "levels": 1, "depth": 1}]
     report = {"created_utc": datetime.now(timezone.utc).isoformat(), "platform": platform.platform(),
               "machine": args.machine, "python": platform.python_version(),
-              "method": "alternating AB/BA fresh processes; each process warms up once; medians are upper-middle",
+              "method": "alternating AB/BA fresh processes; each process warms up once; harness uses upper-middle median; suite uses statistics.median",
               "orders": args.orders, "samples": args.samples, "rounds": args.rounds, "seeds": args.seeds,
               "binaries": {label: {"path": str(path), "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
                            for label, path in binaries.items()}, "runs": [], "memory_runs": [], "summary": []}

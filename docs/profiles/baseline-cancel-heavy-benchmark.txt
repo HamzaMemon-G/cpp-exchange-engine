@@ -1,0 +1,10 @@
+build=Release compiler=GCC 13.3.0
+profile=cancel-heavy commands=1000000 seed=42 setup_commands=16384 levels=1024 depth=8 workload_fingerprint=10224983424103766610
+samples=5 warmup=one_full_workload
+sample=1 seconds=2.039 commands_per_second=490435.761
+final_book active_orders=14434 bid_levels=1023 ask_levels=1021 reserved_ids=515409
+sample=2 seconds=2.050 commands_per_second=487888.888
+sample=3 seconds=2.047 commands_per_second=488480.480
+sample=4 seconds=2.051 commands_per_second=487451.889
+sample=5 seconds=2.057 commands_per_second=486067.903
+median_commands_per_second=487888.888 accepted=1000000 rejected=0 adds=499025 cancels=500975 trades=0 volume=0

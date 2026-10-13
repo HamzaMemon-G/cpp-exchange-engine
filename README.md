@@ -112,15 +112,16 @@ END_BOOK
 
 `include/exchange/types.hpp` defines value types. `Engine` owns two ordered maps
 of price levels, each with a `std::list<Order>`. An unordered ID map stores
-stable list iterators for cancellation, and an unordered set reserves accepted
+stable price-level and list iterators for cancellation, and an unordered set reserves accepted
 IDs. `commands.cpp` owns text parsing/presentation; the matching core performs
 no I/O. `event_log.cpp` handles persistence/replay. `workload.cpp` generates
 commands shared by the generator and benchmark.
 
-New/exhausted levels cost O(log L) in the ordered maps; list operations are O(1).
-Hash lookups are expected O(1), with the usual worst-case caveat. Matching costs
-O(F + E log L) for F makers visited and E price levels erased. Cancellation finds
-the order by hash lookup, then locates its price level in O(log L). Memory is
+Resting an order looks up/inserts its price level in O(log L); list operations are
+O(1). Hash lookups are expected O(1), with the usual worst-case caveat. Matching
+visits F makers and erases exhausted levels by iterator (amortized O(1) per erase).
+Cancellation uses the ID hash lookup and stored iterators, avoiding a price-tree
+search; list erasure is O(1) and final-level erasure is amortized O(1). Memory is
 O(active orders + price levels + all accepted IDs). The lifetime ID set grows
 even when the active book stays small. Snapshots allocate a vector; invariant
 checks scan the book and are kept out of timed matching.
@@ -129,7 +130,13 @@ This favors readable ownership and cancellation correctness over allocation
 control or cache locality. Allocations and result-vector construction are part
 of the implementation and benchmark. There is one owner thread; callers must
 serialize access. Copies of the engine are disabled; moves preserve list
-iterators and are explicitly tested. Allocation failure is fatal: the engine
+and level iterators and are explicitly tested, including replacing a populated
+destination and cancelling after multilevel fills. Level handles remain valid
+until the last order is removed: every filled maker's ID entry is removed before
+its level can be erased, and cancellation removes the last remaining entry as
+part of the same command. A tagged variant distinguishes bid and ask map handles;
+it uses explicit indices because iterator types can coincide in some libraries.
+Allocation failure is fatal: the engine
 does not promise a strong exception guarantee after memory exhaustion.
 
 ## Journal and replay
@@ -264,4 +271,6 @@ timing and those rates must not be used as Release throughput measurements.
 
 No timing-based test assertions, CPU affinity, cache flushing, real-market traces,
 network latency, or production-HFT claim. See [measured results](docs/BENCHMARK.md)
-for the actual local run and limitations. TCP/networking is a later milestone.
+for the original local run and limitations, and [the cancellation experiment](docs/PERFORMANCE.md)
+for broader workloads, process memory and paired before/after results.
+TCP/networking is a later milestone.

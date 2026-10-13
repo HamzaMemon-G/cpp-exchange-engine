@@ -1,5 +1,8 @@
 name: C++ checks
 on: [push, pull_request]
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
   linux:
     runs-on: ubuntu-24.04
@@ -21,3 +24,13 @@ jobs:
       - run: cmake -S . -B build
       - run: cmake --build build --config Release --parallel 2
       - run: ctest --test-dir build -C Release --output-on-failure
+  linux-checked-iterators:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure checked standard-library iterators
+        run: >-
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER=g++
+          "-DCMAKE_CXX_FLAGS=-D_GLIBCXX_DEBUG -D_GLIBCXX_ASSERTIONS"
+      - run: cmake --build build --parallel 2
+      - run: ctest --test-dir build --output-on-failure

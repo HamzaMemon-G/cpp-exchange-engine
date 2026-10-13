@@ -3,6 +3,7 @@
 #include <iterator>
 #include <limits>
 #include <stdexcept>
+#include <type_traits>
 
 namespace exchange {
 std::string status_name(Status s) {
@@ -38,9 +39,13 @@ template<class Book> void Engine::match(Order& incoming, Book& book, Result& res
     }
 }
 template<class Book> void Engine::rest(Order order, Book& book) {
-    auto& queue = book[order.price];
+    const auto level = book.try_emplace(order.price).first;
+    auto& queue = level->second;
     queue.push_back(order);
-    active_.emplace(order.id, Location{order.side, order.price, std::prev(queue.end())});
+    if constexpr (std::is_same_v<Book, Bids>)
+        active_.emplace(order.id, Location{Level{std::in_place_index<0>, level}, std::prev(queue.end())});
+    else
+        active_.emplace(order.id, Location{Level{std::in_place_index<1>, level}, std::prev(queue.end())});
 }
 Result Engine::add(OrderId id, Side side, Value price, Value quantity) {
     Result result{next_sequence(), Status::Accepted, {}};
@@ -68,12 +73,12 @@ Result Engine::cancel(OrderId id) {
     const auto found = active_.find(id);
     if (found == active_.end()) { result.status = Status::UnknownId; return result; }
     const auto loc = found->second;
-    if (loc.side == Side::Buy) {
-        auto level = bids_.find(loc.price);
+    if (loc.level.index() == 0) {
+        const auto level = std::get<0>(loc.level);
         level->second.erase(loc.order);
         if (level->second.empty()) bids_.erase(level);
     } else {
-        auto level = asks_.find(loc.price);
+        const auto level = std::get<1>(loc.level);
         level->second.erase(loc.order);
         if (level->second.empty()) asks_.erase(level);
     }
@@ -97,7 +102,8 @@ bool Engine::valid() const {
     if (!bids_.empty() && !asks_.empty() && bids_.begin()->first >= asks_.begin()->first) return false;
     std::unordered_set<OrderId> seen;
     auto check = [&](const auto& book, Side side) {
-        for (const auto& [price, queue] : book) {
+        for (auto level = book.begin(); level != book.end(); ++level) {
+            const auto& [price, queue] = *level;
             if (queue.empty()) return false;
             std::uint64_t last = 0;
             for (auto it = queue.begin(); it != queue.end(); ++it) {
@@ -106,8 +112,12 @@ bool Engine::valid() const {
                     order.sequence <= last || order.sequence > sequence_ || !used_.contains(order.id) ||
                     !seen.insert(order.id).second) return false;
                 const auto loc = active_.find(order.id);
-                if (loc == active_.end() || loc->second.side != side || loc->second.price != price ||
-                    loc->second.order != it) return false;
+                if (loc == active_.end() || loc->second.order != it) return false;
+                if constexpr (std::is_same_v<std::remove_cvref_t<decltype(book)>, Bids>) {
+                    if (loc->second.level.index() != 0 || std::get<0>(loc->second.level) != level) return false;
+                } else {
+                    if (loc->second.level.index() != 1 || std::get<1>(loc->second.level) != level) return false;
+                }
                 last = order.sequence;
             }
         }

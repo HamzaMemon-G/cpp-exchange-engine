@@ -8,6 +8,9 @@ on:
       - 'include/exchange/**'
       - '.github/workflows/profile.yml'
   workflow_dispatch:
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
   gprof:
     runs-on: ubuntu-24.04

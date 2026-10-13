@@ -5,6 +5,7 @@
 #include <map>
 #include <unordered_map>
 #include <unordered_set>
+#include <variant>
 
 namespace exchange {
 struct BookMetrics {
@@ -29,7 +30,10 @@ private:
     using Queue = std::list<Order>;
     using Bids = std::map<Value, Queue, std::greater<Value>>;
     using Asks = std::map<Value, Queue>;
-    struct Location { Side side; Value price; Queue::iterator order; };
+    // Index 0 is a bid level, index 1 an ask level. Use explicit indices because
+    // a standard library may use the same iterator type for both map types.
+    using Level = std::variant<Bids::iterator, Asks::iterator>;
+    struct Location { Level level; Queue::iterator order; };
     Bids bids_;
     Asks asks_;
     std::unordered_map<OrderId, Location> active_;
