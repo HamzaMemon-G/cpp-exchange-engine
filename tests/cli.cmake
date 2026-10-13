@@ -41,6 +41,12 @@ if(NOT rc EQUAL 1 OR EXISTS "${missing}" OR NOT err MATCHES "cannot open input f
 endif()
 
 # Immediate orders retain old command output and add explicit expiration lines.
+execute_process(COMMAND "${CLI}" --input "${SOURCE}/examples/order-types.txt"
+  RESULT_VARIABLE rc OUTPUT_VARIABLE out ERROR_VARIABLE err)
+file(READ "${SOURCE}/examples/order-types-output.txt" expected)
+if(NOT rc EQUAL 0 OR NOT out STREQUAL expected OR NOT err STREQUAL "")
+  message(FATAL_ERROR "documented order types output differs: ${rc} ${out} ${err}")
+endif()
 file(WRITE "${dir}/immediate.txt" "ADD 1 SELL 100 5\nADD 2 SELL 101 4\nIOC 3 BUY 100 7\nMARKET 4 BUY 10\nMARKET 5 SELL 2\nCANCEL 3\nADD 4 BUY 99 1\nBOOK\n")
 set(v2 "${dir}/immediate.log")
 file(REMOVE "${v2}")

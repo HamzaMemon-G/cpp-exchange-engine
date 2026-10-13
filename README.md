@@ -1,6 +1,7 @@
 # C++ Exchange Matching Engine
 
-A standalone, CPU-only, single-instrument limit-order matching engine in C++20.
+A standalone, CPU-only, single-instrument matching engine in C++20, with GTC
+limit orders, immediate-or-cancel (IOC) limits, market orders and amendments.
 Includes a scriptable CLI, an append-only command journal, deterministic replay,
 an independent reference-model test, and a reproducible synthetic benchmark.
 No accounts, credentials, market data, networking, or external dependencies.
@@ -60,6 +61,9 @@ One command per line, case sensitive, whitespace separated:
 |---|---|
 | `ADD <id> BUY <price> <quantity>` | Submit buy limit order |
 | `ADD <id> SELL <price> <quantity>` | Submit sell limit order |
+| `IOC <id> BUY/SELL <price> <quantity>` | Match at the limit or better, immediately expire the remainder |
+| `MARKET <id> BUY/SELL <quantity>` | Match available opposite prices, immediately expire the remainder |
+| `AMEND <id> <price> <remaining_quantity>` | Change an active order's price and remaining quantity |
 | `CANCEL <id>` | Cancel all remaining quantity of an active order |
 | `BOOK` | Print each resting order in price-time order |
 | `QUIT` | Stop; subsequent input is ignored |
@@ -71,7 +75,7 @@ Prices are abstract ticks; no currency or fractional-price assumptions are made.
 Both LF and CRLF command files are accepted.
 
 Without `--input`, commands come from stdin; an EOF ends the session.
-`--help` prints usage. Order results and trades go to stdout, parser errors to
+`--help` prints usage. Order results, trades and immediate expiration quantities go to stdout, parser errors to
 stderr. Exit codes: 0 = all commands accepted; 2 = at least one parser/business
 rejection (processing continued); 1 = fatal option/file/log/runtime error.
 Rejects are deliberate in generated workloads, so their CLI runs usually exit 2.
@@ -94,11 +98,17 @@ END_BOOK
   a sell crosses at bid >= limit. Execution always uses the resting order price.
 * One incoming order may consume several makers and price levels. A partially
   filled maker stays at the front of its existing queue. An unfilled incoming
-  remainder rests at its limit with its original acceptance sequence.
+  GTC remainder rests at its limit with its original acceptance sequence. IOC
+  limits respect the same price bound but expire their remainder. Market orders
+  have no price bound and expire any remainder; neither immediate type rests.
+* Same-price amendments that reduce or retain remaining quantity keep FIFO
+  priority. Increasing remaining quantity or changing price removes the order,
+  matches it again and queues any remainder with the amendment's sequence.
+  ID and side stay fixed. The quantity argument is the new **remaining** quantity.
 * A successfully accepted ID is reserved for the entire engine session, even
-  after cancellation or complete fill. Duplicates return `DUPLICATE_ID`.
-  Cancelling a missing, filled, or already cancelled order returns `UNKNOWN_ID`.
-* Every core ADD/CANCEL attempt consumes one increasing sequence, including
+  after cancellation, complete fill or immediate expiry. Duplicates return `DUPLICATE_ID`.
+  Cancelling or amending a missing, filled, expired or cancelled order returns `UNKNOWN_ID`.
+* Every core ADD/IOC/MARKET/AMEND/CANCEL attempt consumes one increasing sequence, including
   business rejections. CLI parse failures, BOOK, comments, and QUIT consume none.
   Multiple trades from a command share its sequence and are ordered by their
   position in the result vector/log replay output.
@@ -106,7 +116,8 @@ END_BOOK
   Quantities only decrease by a positive value <= their current quantity, so
   subtraction is safe even at the signed 64-bit maximum. The core never sums
   level quantities. Sequence exhaustion throws before state mutation.
-* No amend, market order, IOC/FOK, risk limits, fees, or multiple instruments.
+* No FOK, risk limits, fees, side changes or multiple instruments. See
+  [order types and priority](docs/ORDER_TYPES.md) for API details and the tested example.
 
 ## Architecture and tradeoffs
 
@@ -151,17 +162,25 @@ does not promise a strong exception guarantee after memory exhaustion.
 The binary-opened file is UTF-8/ASCII with literal LF delimiters:
 
 ```text
-EXCHANGE_LOG_V1
+EXCHANGE_LOG_V2
 1\tADD 1 SELL 100 10
 2\tADD 2 BUY 101 4
 ```
 
 Here `\t` denotes one actual tab. Every line, including the header and final
-record, must end in LF. Records are consecutively numbered canonical ADD/CANCEL
-commands. Valid command attempts are logged, including duplicates and unknown
+record, must end in LF. New journals use V2; records are consecutively numbered
+canonical ADD/CANCEL/IOC/MARKET/AMEND commands. Valid command attempts are logged, including duplicates and unknown
 cancellations, so their sequence behavior is reproduced. Parser failures and
 queries are excluded. Replay runs the same core and reproduces trade vectors,
 remaining orders, sequence, and reserved IDs; the CLI prints the final book.
+It also reproduces immediate expiration quantities and amendment priority.
+
+V1 journals remain replayable and can still append ADD/CANCEL. To use new commands,
+stop the writer and create a validated V2 copy with
+`exchange_cli --upgrade-log old.log --output-log upgraded.log`. The destination
+must not exist; the source is unchanged. Replay the copy before resuming it.
+This is an offline copy operation, with no atomic crash/power-loss guarantee.
+See [migration details](docs/ORDER_TYPES.md#versioned-journals).
 
 Each record is appended and flushed **before** applying the command. A write
 failure stops the process; do not continue using that session in memory.
@@ -192,6 +211,10 @@ invalid inputs, maximum numeric values, deterministic workload generation, and
 replay equivalence including rejected attempts. Twenty seeds x 2,000 commands
 compare every result and snapshot against an independent flat-vector reference
 model, check book/index invariants, and check quantity conservation.
+Two more independent 20-seed streams each test 60,000 commands: immediate-order
+mixes and amendment mixes. Results, trades, expirations, books, FIFO and total
+quantity disposition are checked after every command. V1/V2 compatibility,
+validated-copy upgrades and the new documented example are also tested.
 
 ```sh
 ./build/exchange_generate --orders 100000 --seed 42 > workload.txt
@@ -208,7 +231,7 @@ commands; repetitions 1..100; seed accepts the unsigned 64-bit range, including 
 
 The benchmark pre-generates the entire workload, runs one full untimed warm-up,
 then measures fresh engines with `steady_clock`. Timed throughput includes core
-ADD/CANCEL, allocations, result destruction, and small result-accounting overhead;
+command execution, allocations, result destruction, and small result-accounting overhead;
 it excludes generation, parsing, formatting, logging, engine construction and
 teardown, and invariant checking. Results include rejected cancellations.
 Samples reuse one seed; the reported median is the upper middle sample for an
@@ -229,13 +252,16 @@ profiles use the same matching engine, with no special core behavior:
 | `cancel-heavy` | Same preload, roughly 50% successful cancels; approximately steady book size |
 | `sweep` | Repeated batches of resting orders followed by one taker consuming the whole batch; alternates sides |
 | `id-churn` | Alternating add/cancel pairs; small active book, steadily growing reserved-ID set |
+| `aggressive` | Roughly 50% GTC, 15% IOC, 15% market, 10% attempted amendment and 10% attempted cancel |
 
 `--levels` and `--depth` control the initial book or sweep batch. Deep/cancel-heavy
 setup has `2 * levels * depth` orders and is reapplied before every sample, outside
 timing. Prices stay noncrossing and cancellation targets are tracked during
 generation. If that pool empties, generation adds an order instead; output reports
 the actual mix. Sweep batches have `levels * depth` makers of quantity one and one
-taker; a final incomplete batch is allowed. Mixed and id-churn ignore book shape.
+taker; a final incomplete batch is allowed. Mixed, id-churn and aggressive ignore book shape.
+Aggressive uses bounded prices and quantities like mixed; amend/cancel targets
+are earlier IDs, including those already filled or expired. Actual counters are reported.
 All profiles process exactly `--orders` timed attempts, excluding setup. The
 product `levels * depth` is limited to 500,000 to bound setup size. The generator
 supports the same profile/shape options and prints setup before the timed commands.
@@ -255,7 +281,8 @@ They are not engine allocation counts or per-order byte estimates. Memory is
 sampled before invariant checking; the final destruction checkpoint can include
 allocations made by that check. Other platforms report memory unavailable.
 
-The standard-library-only Python suite covers five profiles and three seeds,
+The standard-library-only Python suite defaults to five historical profiles and three seeds;
+use `--profiles aggressive` (or an explicit list) to include new order types. It
 collects fresh-process memory passes, and saves exact commands, raw outputs,
 executable hashes and platform metadata. With `--baseline PATH`, it alternates
 baseline/candidate process order and checks workload fingerprints, result counters
