@@ -1,321 +1,74 @@
 # C++ Exchange Matching Engine
 
-A standalone, CPU-only, single-instrument matching engine in C++20, with GTC
-limit orders, immediate-or-cancel (IOC) limits, market orders and amendments.
-Includes a scriptable CLI, an append-only command journal, deterministic replay,
-an independent reference-model test, and a reproducible synthetic benchmark.
-No accounts, credentials, market data, networking, or external dependencies.
+[![C++ checks](https://github.com/HamzaMemon-G/cpp-exchange-engine/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/HamzaMemon-G/cpp-exchange-engine/actions/workflows/ci.yml)
+[![Command fuzzing](https://github.com/HamzaMemon-G/cpp-exchange-engine/actions/workflows/fuzz.yml/badge.svg?branch=main)](https://github.com/HamzaMemon-G/cpp-exchange-engine/actions/workflows/fuzz.yml)
 
-## Build and test
+A standalone C++20 simulation of a single-instrument exchange matching engine. Submit limit, immediate-or-cancel, and market orders; amend or cancel them; inspect the book; and replay a journal. The matching core is single-threaded and CPU-only. This is a command-line project with no GUI, exchange connection, real-money trading, account data, or network service.
 
-Requires CMake 3.20+, a C++20 compiler, and its build tools. No packages need to
-be downloaded by the build. All tests use explicit checks, including in Release.
+## Try it
 
-Linux (GCC or Clang):
+With CMake and a C++20 compiler installed:
 
 ```sh
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build --parallel 2
 ctest --test-dir build --output-on-failure
-./build/exchange_cli --input examples/commands.txt
-./build/exchange_bench --orders 100000 --seed 42 --samples 5 --latency
+./build/exchange_cli --input examples/order-types.txt
 ```
 
-Windows with MinGW GCC and Ninja on PATH (PowerShell):
+Windows PowerShell with MinGW and Ninja on `PATH`:
 
 ```powershell
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build --parallel 2
 ctest --test-dir build --output-on-failure
-.\build\exchange_cli.exe --input examples/commands.txt
-.\build\exchange_bench.exe --orders 100000 --seed 42 --samples 5 --latency
+.\build\exchange_cli.exe --input examples\order-types.txt
 ```
 
-Windows with Visual Studio C++ tools installed:
+The CLI prints accepted orders, trades, expirations, and book snapshots. Run it without `--input` to type commands interactively, or use `--help` to see options. CMake 3.20 or newer is required. See the [complete example input](examples/order-types.txt) and its [expected output](examples/order-types-output.txt).
 
-```powershell
-cmake -S . -B build
-cmake --build build --config Release --parallel 2
-ctest --test-dir build -C Release --output-on-failure
-.\build\Release\exchange_cli.exe --input examples/commands.txt
-```
-
-Use a separate directory for each compiler/configuration. Linux sanitizer checks:
-
-```sh
-cmake -S . -B build-sanitize -DCMAKE_BUILD_TYPE=Debug -DEXCHANGE_SANITIZERS=ON
-cmake --build build-sanitize --parallel 2
-ctest --test-dir build-sanitize --output-on-failure
-```
-
-Sanitizers need compiler/runtime support; this option is intended for GCC/Clang
-on Linux. The CI configuration exercises GCC and Clang with sanitizers on Linux,
-and MSVC Release on Windows. See [validation](docs/VALIDATION.md) for what was
-actually verified, including the linked successful hosted run.
-
-## Commands
-
-One command per line, case sensitive, whitespace separated:
-
-| Command | Meaning |
-|---|---|
-| `ADD <id> BUY <price> <quantity>` | Submit buy limit order |
-| `ADD <id> SELL <price> <quantity>` | Submit sell limit order |
-| `IOC <id> BUY/SELL <price> <quantity>` | Match at the limit or better, immediately expire the remainder |
-| `MARKET <id> BUY/SELL <quantity>` | Match available opposite prices, immediately expire the remainder |
-| `AMEND <id> <price> <remaining_quantity>` | Change an active order's price and remaining quantity |
-| `CANCEL <id>` | Cancel all remaining quantity of an active order |
-| `BOOK` | Print each resting order in price-time order |
-| `QUIT` | Stop; subsequent input is ignored |
-
-Blank lines and whole-line `#` comments are ignored; inline comments are not
-supported. Numeric fields are decimal integers, without a sign. IDs are
-1..18446744073709551615; prices and quantities are 1..9223372036854775807.
-Prices are abstract ticks; no currency or fractional-price assumptions are made.
-Both LF and CRLF command files are accepted.
-
-Without `--input`, commands come from stdin; an EOF ends the session.
-`--help` prints usage. Order results, trades and immediate expiration quantities go to stdout, parser errors to
-stderr. Exit codes: 0 = all commands accepted; 2 = at least one parser/business
-rejection (processing continued); 1 = fatal option/file/log/runtime error.
-Rejects are deliberate in generated workloads, so their CLI runs usually exit 2.
-
-The sample's first crossing order produces:
+For example, the sample rests two buy orders at 100. A market sell first fills the oldest order; a later market sell sweeps the next order:
 
 ```text
-RESULT sequence=4 id=4 status=ACCEPTED
-TRADE sequence=4 maker=1 taker=4 price=100 quantity=10
-TRADE sequence=4 maker=2 taker=4 price=100 quantity=2
-BOOK sequence=4
-SELL price=100 remaining=3 id=2 sequence=2
-SELL price=101 remaining=8 id=3 sequence=3
+TRADE sequence=4 maker=1 taker=3 price=100 quantity=2
+BOOK sequence=5
+BUY price=100 remaining=8 id=2 sequence=2
+BUY price=100 remaining=7 id=1 sequence=5
 END_BOOK
 ```
 
-## Matching rules and boundaries
+## What it demonstrates
 
-* Best price first, FIFO within a price level. A buy crosses at ask <= limit;
-  a sell crosses at bid >= limit. Execution always uses the resting order price.
-* One incoming order may consume several makers and price levels. A partially
-  filled maker stays at the front of its existing queue. An unfilled incoming
-  GTC remainder rests at its limit with its original acceptance sequence. IOC
-  limits respect the same price bound but expire their remainder. Market orders
-  have no price bound and expire any remainder; neither immediate type rests.
-* Same-price amendments that reduce or retain remaining quantity keep FIFO
-  priority. Increasing remaining quantity moves the order to its queue's back.
-  Changing price removes it, matches it again and queues any remainder.
-  Both changes give the order the amendment's priority sequence.
-  ID and side stay fixed. The quantity argument is the new **remaining** quantity.
-* A successfully accepted ID is reserved for the entire engine session, even
-  after cancellation, complete fill or immediate expiry. Duplicates return `DUPLICATE_ID`.
-  Cancelling or amending a missing, filled, expired or cancelled order returns `UNKNOWN_ID`.
-* Every core ADD/IOC/MARKET/AMEND/CANCEL attempt consumes one increasing sequence, including
-  business rejections. CLI parse failures, BOOK, comments, and QUIT consume none.
-  Multiple trades from a command share its sequence and are ordered by their
-  position in the result vector/log replay output.
-* Validation occurs before matching. No floating-point arithmetic is used.
-  Quantities only decrease by a positive value <= their current quantity, so
-  subtraction is safe even at the signed 64-bit maximum. The core never sums
-  level quantities. Sequence exhaustion throws before state mutation.
-* No FOK, risk limits, fees, side changes or multiple instruments. See
-  [order types and priority](docs/ORDER_TYPES.md) for API details and the tested example.
+- Best-price matching, FIFO priority at each price, and trades at the resting order's price.
+- Partial fills and orders sweeping multiple price levels.
+- GTC limit, IOC limit, and market orders, with immediate leftovers explicitly expired.
+- Amendments with defined FIFO behavior: same-price reductions keep priority; increases move to the back; price changes re-enter matching.
+- Cancellation by ID and lifetime reservation of accepted IDs.
+- A versioned append-only command journal, deterministic replay, resume, and validated V1-to-V2 log-copy upgrade.
+- A scriptable CLI, deterministic workload generator, benchmark harness, independent reference model, and optional sanitizer-backed command fuzzer.
 
-## Architecture and tradeoffs
+## Design
 
-`include/exchange/types.hpp` defines value types. `Engine` owns two ordered maps
-of price levels, each with a `std::list<Order>`. An unordered ID map stores
-stable price-level and list iterators for cancellation, and an unordered set reserves accepted
-IDs. `commands.cpp` owns text parsing/presentation; the matching core performs
-no I/O. `event_log.cpp` handles persistence/replay. `workload.cpp` generates
-commands shared by the generator and benchmark.
+The engine stores bid and ask price levels in ordered maps. Each level contains a FIFO list of orders; an ID index retains stable handles for cancellation and amendment. This supports best-price lookup, constant-time queue operations, and expected constant-time ID lookup while keeping matching ownership in one thread.
 
-Resting an order looks up/inserts its price level in O(log L); list operations are
-O(1). Hash lookups are expected O(1), with the usual worst-case caveat. Matching
-visits F makers and erases exhausted levels by iterator (amortized O(1) per erase).
-Cancellation uses the ID hash lookup and stored iterators, avoiding a price-tree
-search; list erasure is O(1) and final-level erasure is amortized O(1).
-Same-price amendments use the ID lookup and O(1) quantity update/list splice,
-preserving the stored node handles; price changes follow matching/resting costs.
-Memory is O(active orders + price levels + all accepted IDs). The lifetime ID set grows
-even when the active book stays small. Snapshots allocate a vector; invariant
-checks scan the book and are kept out of timed matching.
+The journal records accepted command attempts before applying them and can rebuild the book and reserved IDs by replay. It is an educational intent log, not a production durability protocol: flush does not guarantee device persistence, and the format has no checksums, concurrent-writer coordination, or tamper detection.
 
-This favors readable ownership and cancellation correctness over allocation
-control or cache locality. Allocations and result-vector construction are part
-of the implementation and benchmark. There is one owner thread; callers must
-serialize access. Copies of the engine are disabled; moves preserve list
-and level iterators and are explicitly tested, including replacing a populated
-destination and cancelling after multilevel fills. Level handles remain valid
-until the last order is removed: every filled maker's ID entry is removed before
-its level can be erased, and cancellation removes the last remaining entry as
-part of the same command. A tagged variant distinguishes bid and ask map handles;
-it uses explicit indices because iterator types can coincide in some libraries.
-Allocation failure is fatal: the engine
-does not promise a strong exception guarantee after memory exhaustion.
+## Validation and performance
 
-## Journal and replay
+The main branch passes hosted Linux GCC and Clang sanitizer builds, checked-iterator tests, Windows MSVC tests, and bounded command fuzzing. Local Debug and Release runs each pass all four CTest entries. Tests compare randomized command streams and bounded exhaustive streams against an independent reference implementation. See [validation details](docs/VALIDATION.md).
 
-```sh
-./build/exchange_cli --input examples/commands.txt --log session.log
-./build/exchange_cli --replay session.log
-# Resume an existing session: reconstruct its book and reserved IDs, then append.
-./build/exchange_cli --log session.log
-```
+Benchmarks use deterministic synthetic workloads, warm-ups, fresh engines, and separate matching-core and process-memory measurements. They are reproducible engineering experiments, not production or HFT performance claims. A same-price amendment fast path measured a 21.47% median paired improvement on its targeted amend-heavy workload and was slightly slower on the aggressive workload. The raw data, setup, and limitations are documented in [the amendment report](docs/AMEND_PERFORMANCE.md); see also [broader performance measurements](docs/PERFORMANCE.md) and [order-type measurements](docs/ORDER_TYPE_MEASUREMENTS.md).
 
-The binary-opened file is UTF-8/ASCII with literal LF delimiters:
+## Project guide
 
-```text
-EXCHANGE_LOG_V2
-1\tADD 1 SELL 100 10
-2\tADD 2 BUY 101 4
-```
+- [Order types, FIFO rules, and journal migration](docs/ORDER_TYPES.md)
+- [Architecture, workloads, and benchmark method](docs/PERFORMANCE.md)
+- [Original benchmark and measurement limits](docs/BENCHMARK.md)
+- [Fuzzing setup and workflow](docs/FUZZING.md)
+- [Validation record and hosted runs](docs/VALIDATION.md)
 
-Here `\t` denotes one actual tab. Every line, including the header and final
-record, must end in LF. New journals use V2; records are consecutively numbered
-canonical ADD/CANCEL/IOC/MARKET/AMEND commands. Valid command attempts are logged, including duplicates and unknown
-cancellations, so their sequence behavior is reproduced. Parser failures and
-queries are excluded. Replay runs the same core and reproduces trade vectors,
-remaining orders, sequence, and reserved IDs; the CLI prints the final book.
-It also reproduces immediate expiration quantities and amendment priority.
+## Scope
 
-V1 journals remain replayable and can still append ADD/CANCEL. To use new commands,
-stop the writer and create a validated V2 copy with
-`exchange_cli --upgrade-log old.log --output-log upgraded.log`. The destination
-must not exist; the source is unchanged. Replay the copy before resuming it.
-This is an offline copy operation, with no atomic crash/power-loss guarantee.
-See [migration details](docs/ORDER_TYPES.md#versioned-journals).
+This is a learning and portfolio project. It does not implement a network protocol, multiple instruments, risk checks, fees, FOK orders, persistence guarantees, or production exchange behavior. The benchmark does not use real market data and should not be compared directly with production systems.
 
-Each record is appended and flushed **before** applying the command. A write
-failure stops the process; do not continue using that session in memory.
-Existing logs are validated before appending. Unsupported headers, gaps,
-duplicates, noncanonical commands, invalid values, or a final line without LF
-cause failure. No file is silently repaired and no partial engine is returned.
-The optional C++ replay observer is incremental and may receive a valid prefix
-before a later failure; only a successful return establishes a valid full log.
-
-This is an intent journal, not a production durability protocol. Stream flush
-does not guarantee storage-device persistence. A crash after append but before
-stdout may leave a replayable command whose result the caller never saw.
-An allocation failure after journaling likewise requires restarting/replay.
-There are no checksums, locking, concurrent writers, transactional acknowledgments,
-snapshots, or tamper detection; a syntactically valid edited log will replay.
-Only one process may own a journal. Input and journal must be different files.
-To recover a truncated journal, preserve the original and explicitly create a
-reviewed copy ending at the last complete record; the tool never does this itself.
-
-## Tests and benchmark
-
-CTest runs four entries: core/reference/replay tests, the documented example,
-CLI integration covering errors, stdin, append resume, and truncation, and
-benchmark profile/memory-mode/argument checks.
-Core tests cover both crossing directions, maker prices, exact/partial fills,
-multiple levels, retained FIFO, middle/front/back cancellation, lifetime IDs,
-invalid inputs, maximum numeric values, deterministic workload generation, and
-replay equivalence including rejected attempts. Twenty seeds x 2,000 commands
-compare every result and snapshot against an independent flat-vector reference
-model, check book/index invariants, and check quantity conservation.
-Two more independent 20-seed streams each test 60,000 commands: immediate-order
-mixes and amendment mixes. Results, trades, expirations, books, FIFO and total
-quantity disposition are checked after every command. V1/V2 compatibility,
-validated-copy upgrades and the new documented example are also tested.
-All 65,536 four-command streams from a 16-command alphabet are independently
-checked too (262,144 additional command attempts), including repeated IDs,
-amendments, both crossing directions and immediate orders.
-Optional [Clang/Linux fuzzing](docs/FUZZING.md) mutates command text under address
-and undefined-behavior sanitizers and checks parsing/state invariants. Its bounded
-hosted runs supplement the reference tests; see validation for actual results.
-
-```sh
-./build/exchange_generate --orders 100000 --seed 42 > workload.txt
-./build/exchange_cli --input workload.txt
-./build/exchange_bench --orders 100000 --seed 42 --samples 5 --latency
-```
-
-`--orders` counts command attempts, including cancellations. The generator uses
-standardized `mt19937_64` output with explicit modulo mapping: about 80% new
-orders and 20% cancellations of earlier IDs (often already filled). Buy/sell
-are equiprobable, prices 9900..10100, quantities 1..100. Modulo mapping has a tiny
-bias and is a workload choice, not a statistical-market model. Limit: ten million
-commands; repetitions 1..100; seed accepts the unsigned 64-bit range, including 0.
-
-The benchmark pre-generates the entire workload, runs one full untimed warm-up,
-then measures fresh engines with `steady_clock`. Timed throughput includes core
-command execution, allocations, result destruction, and small result-accounting overhead;
-it excludes generation, parsing, formatting, logging, engine construction and
-teardown, and invariant checking. Results include rejected cancellations.
-Samples reuse one seed; the reported median is the upper middle sample for an
-even sample count. A separate optional latency pass timestamps each command,
-excluding result accounting/destruction and including clock overhead. Percentiles
-use floor((N-1)*p/100) sorted sample indices; no interpolation or overhead subtraction.
-An empty clock-pair median helps contextualize instrumented values.
-
-### Broader workloads and memory
-
-The original command stream remains the default `mixed` profile. Additional
-profiles use the same matching engine, with no special core behavior:
-
-| Profile | Workload |
-|---|---|
-| `mixed` | Original 80% adds / 20% attempted cancels, bounded prices; rejections included |
-| `deep` | Preload both sides, then noncrossing adds and roughly 20% successful cancels |
-| `cancel-heavy` | Same preload, roughly 50% successful cancels; approximately steady book size |
-| `sweep` | Repeated batches of resting orders followed by one taker consuming the whole batch; alternates sides |
-| `id-churn` | Alternating add/cancel pairs; small active book, steadily growing reserved-ID set |
-| `aggressive` | Roughly 50% GTC, 15% IOC, 15% market, 10% attempted amendment and 10% attempted cancel |
-| `amend-heavy` | Preload both sides; roughly 75% live amendments, 15% noncrossing adds and 10% successful cancels |
-
-`--levels` and `--depth` control the initial book or sweep batch. Deep/cancel-heavy
-and amend-heavy setup has `2 * levels * depth` orders and is reapplied before every sample, outside
-timing. Prices stay noncrossing and cancellation targets are tracked during
-generation. If that pool empties, generation adds an order instead; output reports
-the actual mix. Sweep batches have `levels * depth` makers of quantity one and one
-taker; a final incomplete batch is allowed. Mixed, id-churn and aggressive ignore book shape.
-Aggressive uses bounded prices and quantities like mixed; amend/cancel targets
-are earlier IDs, including those already filled or expired. Actual counters are reported.
-Amend-heavy tracks live IDs and sides, so every command succeeds. Amendments
-choose remaining quantity 1..100; roughly half attempt a new noncrossing price
-and half keep the current price. Adds start with quantity 50. If the live pool
-empties, it adds instead. This isolates active amendment handling from trading.
-All profiles process exactly `--orders` timed attempts, excluding setup. The
-product `levels * depth` is limited to 500,000 to bound setup size. The generator
-supports the same profile/shape options and prints setup before the timed commands.
-
-```sh
-./build/exchange_bench --profile cancel-heavy --levels 4096 --depth 8 --orders 200000 --samples 7
-./build/exchange_bench --profile deep --levels 4096 --depth 8 --orders 200000 --memory-only
-python tools/benchmark_suite.py --binary ./build/exchange_bench --output work/suite.json
-```
-
-`--memory-only` runs in a separate fresh process, with no warm-up or throughput
-timing. It reports resident/working-set bytes and the process's lifetime peak
-on Windows/Linux, before generation, after generation, after setup, after commands,
-and after engine destruction. These are process-wide OS observations: they include
-the generated workload, runtime, allocator overhead/retained pages, and engine.
-They are not engine allocation counts or per-order byte estimates. Memory is
-sampled before invariant checking; the final destruction checkpoint can include
-allocations made by that check. Other platforms report memory unavailable.
-
-The standard-library-only Python suite defaults to five historical profiles and three seeds;
-use `--profiles aggressive amend-heavy` (or an explicit list) to include new order types. It
-collects fresh-process memory passes, and saves exact commands, raw outputs,
-executable hashes and platform metadata. With `--baseline PATH`, it alternates
-baseline/candidate process order and checks workload fingerprints, result counters
-and final-book metrics before comparing paired rates. An untimed warm-up hashes
-every result/trade and final order into a result fingerprint, checked across
-binaries and against the memory pass (a reproducibility check, not a cryptographic
-integrity guarantee). Each harness sample also
-compares its complete final book and counters with the warm-up result, outside
-timing. Independent reference tests cover all specialized profiles. Performance
-has no pass/fail threshold. The optional CPU profile workflow captures whole-process
-GCC/gprof profiles as downloadable artifacts; profiling instrumentation affects
-timing and those rates must not be used as Release throughput measurements.
-
-No timing-based test assertions, CPU affinity, cache flushing, real-market traces,
-network latency, or production-HFT claim. See [measured results](docs/BENCHMARK.md)
-for the original local run and limitations, and [the cancellation experiment](docs/PERFORMANCE.md)
-for broader workloads, process memory and paired before/after results.
-See [new order-type measurements](docs/ORDER_TYPE_MEASUREMENTS.md) for the added
-workloads and the observed compatibility/performance cost of the feature extension.
-The [same-price amendment experiment](docs/AMEND_PERFORMANCE.md) measures a
-separate node-preserving optimization with an identical before/after harness.
-TCP/networking is a later milestone.
+No license file is included yet. Contact the author before reusing or redistributing the code.
